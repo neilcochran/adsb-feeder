@@ -1,0 +1,21 @@
+{
+  "version": "1.0",
+  "layout": {
+    "columns": 2,
+    "left": [
+      "uptime",
+      "cpu_usage",
+      "memory",
+      "temperatures",
+      "fan"
+    ],
+    "right": [
+      "adsb",
+      "services",
+      "network"
+    ]
+  },
+  "options": {
+    "interval": 6
+  }
+}
