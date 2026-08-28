@@ -1,0 +1,26 @@
+# Snapshot of /usr/lib/systemd/system/piaware.service
+# Source: flightaware/piaware_builder package (built from source)
+# DO NOT INSTALL THIS FILE — it is managed by the piaware .deb package.
+# Preserved here for reference only.
+
+[Unit]
+Description=FlightAware ADS-B uploader
+Documentation=https://flightaware.com/adsb/piaware/
+Wants=network-online.target
+After=dump1090-fa.service network-online.target time-sync.target
+
+[Service]
+User=piaware
+RuntimeDirectory=piaware
+ExecStart=/usr/bin/piaware -p %t/piaware/piaware.pid -plainlog -statusfile %t/piaware/status.json
+ExecReload=/bin/kill -HUP $MAINPID
+Type=simple
+Restart=on-failure
+RestartSec=30
+RestartPreventExitStatus=4 6
+WatchdogSec=120
+WatchdogSignal=SIGKILL
+NotifyAccess=all
+
+[Install]
+WantedBy=default.target

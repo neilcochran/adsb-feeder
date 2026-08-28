@@ -1,0 +1,40 @@
+# adsb-stats.service — ADS-B Statistics Collector
+#
+# Installs to /etc/systemd/system/adsb-stats.service
+# Code expected at /opt/adsb-feeder/ (the adsb_stats/ package)
+#
+# Create a dedicated user to match the pattern of the other feeder services:
+#   sudo useradd --system --home-dir /var/lib/adsb-stats \
+#     --shell /usr/sbin/nologin adsbstats
+#
+# Data directory:  /var/lib/adsb-stats/stats.db
+# Config file:     /etc/adsb-stats/config.json
+#
+# See README.md in this directory for the full service topology.
+
+[Unit]
+Description=ADS-B Statistics Collector (Beast stream → SQLite)
+Documentation=https://github.com/neilcochran/adsb-feeder/blob/main/systemd/README.md
+After=dump1090-fa.service network-online.target
+Wants=dump1090-fa.service
+
+[Service]
+Type=simple
+User=adsbstats
+Group=adsbstats
+WorkingDirectory=/opt/adsb-feeder
+ExecStart=/usr/bin/python3 -m adsb_stats.cli run
+Restart=on-failure
+RestartSec=10
+Nice=5
+SyslogIdentifier=adsb-stats
+
+# Hardening (matches the level of piaware / dump1090-fa)
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/var/lib/adsb-stats /etc/adsb-stats
+
+[Install]
+WantedBy=multi-user.target

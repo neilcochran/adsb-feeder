@@ -1,0 +1,20 @@
+# Snapshot of /usr/lib/systemd/system/generate-pirehose-cert.service
+# Source: flightaware/piaware_builder package (built from source)
+# DO NOT INSTALL THIS FILE — it is managed by the piaware .deb package.
+# Preserved here for reference only.
+
+[Unit]
+Description=Generate Pirehose certificate if missing
+Documentation=https://flightaware.com/adsb/piaware/
+Before=piaware.service
+ConditionPathExists=!/etc/piaware/pirehose.cert.pem
+ConditionPathExists=!/etc/piaware/pirehose.key.pem
+
+[Service]
+User=root
+ExecStart=/usr/lib/pirehose/generate-cert.sh
+Type=oneshot
+RemainAfterExit=yes
+
+[Install]
+WantedBy=piaware.service
