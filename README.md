@@ -380,34 +380,13 @@ lsmod | grep dvb_usb
 ## System Monitor
 
 This repo includes `monitor/adsb-sys-monitor.py`, a real-time terminal
-dashboard for monitoring the feeder station. It displays:
+dashboard for monitoring the feeder station. It displays system uptime,
+CPU usage and frequencies, temperatures, fan speed, memory, feeder service
+status with crash/retry detection, ADS-B aircraft tracking stats, and WiFi
+connectivity with upload throughput.
 
-- System uptime and boot time
-- CPU usage and load average
-- Per-core CPU frequencies (big.LITTLE clusters)
-- Thermal zone temperatures
-- Fan PWM duty cycle and mode
-- RAM and swap usage
-- Feeder service status with crash/retry detection
-- ADS-B aircraft tracking and message counts
-- WiFi connection status, signal strength, and upload throughput
-
-### Usage
-
-```bash
-python3 monitor/adsb-sys-monitor.py
-python3 monitor/adsb-sys-monitor.py --config monitor/configs/stationary.json
-python3 monitor/adsb-sys-monitor.py -i 1
-```
-
-### Configuration
-
-The monitor auto-creates `~/.config/adsb-monitor/config.json` on first run.
-Sections can be arranged in 1 or 2 column layouts via JSON config. See
-`monitor/configs/` for example configurations.
-
-Available sections: `uptime`, `cpu_usage`, `memory`, `temperatures`,
-`cpu_freq`, `fan`, `services`, `adsb`, `network`
+For installation, configuration, usage, and troubleshooting, see
+[`monitor/INSTALL.md`](monitor/INSTALL.md).
 
 ## Useful Links
 
