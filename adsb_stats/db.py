@@ -45,6 +45,13 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
             conn.execute(
                 "ALTER TABLE global_stats ADD COLUMN last_dump1090_msg_count INTEGER"
             )
+    if "error_count" not in columns:
+        with conn:
+            conn.execute(
+                "ALTER TABLE global_stats ADD COLUMN error_count INTEGER NOT NULL DEFAULT 0"
+            )
+            conn.execute("ALTER TABLE global_stats ADD COLUMN last_error_ts TEXT")
+            conn.execute("ALTER TABLE global_stats ADD COLUMN last_error_msg TEXT")
 
 
 def get_connection(db_path: str) -> sqlite3.Connection:
@@ -169,6 +176,32 @@ def update_global_incremental(conn: sqlite3.Connection, msg_delta: int, uaircraf
               first_msg_ts, last_msg_ts, last_dump1090_msg_count))
 
 
+def update_error_stats(conn: sqlite3.Connection, error_delta: int,
+                       last_error_ts: str, last_error_msg: str) -> None:
+    """
+    Add to the global error count and overwrite the last-error fields.
+
+    Unlike alt_max/dist_max, last_error_ts/last_error_msg are always
+    overwritten rather than MAX-compared - "most recent" is what matters
+    here, the same as last_msg_ts.
+
+    Args:
+        conn: Open database connection.
+        error_delta: Errors to add to error_count since the last write.
+        last_error_ts: Timestamp of the most recent error in this batch.
+        last_error_msg: Short description of the most recent error in this
+            batch.
+    """
+    with conn:
+        conn.execute("""
+            UPDATE global_stats SET
+                error_count = error_count + ?,
+                last_error_ts = ?,
+                last_error_msg = ?
+            WHERE id = 1
+        """, (error_delta, last_error_ts, last_error_msg))
+
+
 def get_last_dump1090_msg_count(conn: sqlite3.Connection) -> Optional[int]:
     """Get the last-seen raw dump1090-fa message counter, or None if never polled."""
     cursor = conn.cursor()
@@ -267,6 +300,9 @@ def get_global_stats(conn: sqlite3.Connection) -> Optional[dict]:
         "dist_max_ts": row[9],
         "first_msg_ts": row[10],
         "last_msg_ts": row[11],
+        "error_count": row[13],
+        "last_error_ts": row[14],
+        "last_error_msg": row[15],
     }
 
 

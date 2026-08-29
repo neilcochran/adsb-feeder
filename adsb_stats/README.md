@@ -70,8 +70,24 @@ sudo systemctl status adsb-stats
 `install.sh` is safe to re-run any time you update the code - it skips
 recreating the user, skips an existing config, skips an existing database,
 and just re-syncs `/opt/adsb-feeder/` and reinstalls the systemd unit.
-Re-run it plus `sudo systemctl restart adsb-stats` after pulling any code
-update.
+After re-running it, migrate the database *before* restarting the service:
+
+```bash
+cd /opt/adsb-feeder
+sudo -u adsbstats python3 -m adsb_stats.cli init --config /etc/adsb-stats/config.json
+sudo systemctl restart adsb-stats
+```
+
+`init` is safe to re-run against an existing database - it only adds
+columns a schema change introduced, never touches existing rows (see
+`db._migrate_schema()`). Migrating before restarting matters whenever an
+update includes a schema change: newly-deployed code can start writing to
+a new column immediately, and restarting first would have it do that
+against a database that doesn't have that column yet, crashing on the
+next write until the migration catches up. Running `init` first (harmless
+even when there's nothing to migrate) means the still-running old process
+keeps working fine on the old schema while the new column gets added
+underneath it, so the new code never finds it missing.
 
 ## Usage
 
@@ -175,7 +191,8 @@ Three tables track statistics at different granularities:
 
 - **`global_stats`** - a single row of all-time totals: message count,
   unique aircraft/flights, max altitude/distance (with which aircraft and
-  when), first/last message timestamps.
+  when), first/last message timestamps, and an error count with the most
+  recent error's time and message (see Error Tracking below).
 - **`daily_stats`** - one row per UTC day, same shape as global but scoped
   to that day. The dedup table behind unique-flight counting resets at UTC
   midnight.
@@ -205,6 +222,38 @@ even across a dump1090-fa restart, an adsb-stats restart, or both at once.
 directly, not the aircraft.json counter - the two are not expected to add
 up to exactly the same number, since they're measuring at different layers
 of the pipeline.
+
+### Error tracking
+
+`ingest.py`'s `process_message` wraps its whole body in a broad
+`except Exception`, deliberately - one malformed SBS line or transient DB
+hiccup shouldn't take down the whole collector. That resilience comes at a
+cost: without something to surface it, a genuine bug in this code (a typo,
+an `AttributeError`) would be silently logged and otherwise invisible.
+`global_stats.error_count`/`last_error_ts`/`last_error_msg` exist to make
+that visible - every exception `process_message` catches increments
+`error_count` and overwrites the last-error fields, batched into the
+existing flush cycle rather than written per-message. `error_count` never
+resets; a climbing count (check it with `status` or the terminal monitor's
+`adsb_health` section) is worth investigating even though the collector
+itself keeps running through it.
+
+### Granting read access to other tools
+
+`stats.db` is owned by the dedicated `adsbstats` user, so another tool
+running as a different user (e.g. `monitor/adsb_sys_monitor.py`'s
+`adsb_global`/`adsb_health` sections) can't read it by default.
+`systemd/install.sh` sets the data directory and database file to `750`/
+`640` (owner read/write, group read-only) rather than leaving them at
+whatever the ambient umask produces. To grant a user read access, add them
+to the `adsbstats` group and have them log out and back in:
+
+```bash
+sudo usermod -aG adsbstats <username>
+```
+
+SQLite handles concurrent readers safely on its own - this is purely a
+file-permission step, not a locking concern.
 
 ## Troubleshooting
 

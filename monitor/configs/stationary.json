@@ -6,12 +6,14 @@
       "uptime",
       "cpu_usage",
       "memory",
-      "temperatures"
+      "temperatures",
+      "network"
     ],
     "right": [
       "adsb",
-      "services",
-      "network"
+      "adsb_global",
+      "adsb_health",
+      "services"
     ]
   },
   "options": {

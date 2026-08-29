@@ -2,7 +2,7 @@
 
 ## Overview
 
-`adsb-sys-monitor.py` is a real-time terminal dashboard for Odroid-XU4 / DietPi
+`adsb_sys_monitor.py` is a real-time terminal dashboard for Odroid-XU4 / DietPi
 ADS-B feeder stations. It reads system metrics from sysfs and `/proc`,
 queries `systemctl` for feeder service status, and parses `dump1090-fa`'s
 live `aircraft.json` to display aircraft tracking statistics — all in a
@@ -26,7 +26,7 @@ present in the repo:
 
 ```bash
 cd ~/adsb-feeder
-ls monitor/adsb-sys-monitor.py
+ls monitor/adsb_sys_monitor.py
 ```
 
 ### Verify External Tools
@@ -62,7 +62,7 @@ Start the monitor with auto-detected config (checks `~/.config/adsb-monitor/conf
 first, then `./config.json`, then falls back to defaults):
 
 ```bash
-python3 monitor/adsb-sys-monitor.py
+python3 monitor/adsb_sys_monitor.py
 ```
 
 ### Custom Configuration
@@ -70,7 +70,7 @@ python3 monitor/adsb-sys-monitor.py
 Specify a configuration file to change layout, sections, or refresh interval:
 
 ```bash
-python3 monitor/adsb-sys-monitor.py --config monitor/configs/stationary.json
+python3 monitor/adsb_sys_monitor.py --config monitor/configs/stationary.json
 ```
 
 ### Refresh Interval Override
@@ -78,7 +78,7 @@ python3 monitor/adsb-sys-monitor.py --config monitor/configs/stationary.json
 Override the configured refresh interval (in seconds) without editing the config:
 
 ```bash
-python3 monitor/adsb-sys-monitor.py -i 1
+python3 monitor/adsb_sys_monitor.py -i 1
 ```
 
 ### Headless / Remote Usage
@@ -125,6 +125,7 @@ If none are found, a default config is auto-created at
 | `layout.left` | string[] | Section names for the left column (or the single column if `columns` is `1`) |
 | `layout.right` | string[] | Section names for the right column (ignored when `columns` is `1`) |
 | `options.interval` | int | Refresh interval in seconds (can be overridden with `-i`) |
+| `options.adsb_stats_db_path` | string | Path to adsb-stats' SQLite database, read by the `adsb_global`/`adsb_health` sections. Default `/var/lib/adsb-stats/stats.db` (matches `adsb_stats`' own default). See Troubleshooting below if those sections can't read it. |
 
 ### Example Configs
 
@@ -138,7 +139,7 @@ The repo ships with two example configs in `monitor/configs/`:
   "layout": {
     "columns": 2,
     "left": ["uptime", "cpu_usage", "memory", "temperatures", "cpu_freq", "fan"],
-    "right": ["services", "adsb", "network"]
+    "right": ["adsb", "adsb_global", "adsb_health", "services", "network"]
   },
   "options": {
     "interval": 2
@@ -170,7 +171,7 @@ file and pass it with `--config`:
 ```bash
 cp monitor/configs/stationary.json ~/.config/adsb-monitor/config.json
 # Edit as needed, then run:
-python3 monitor/adsb-sys-monitor.py
+python3 monitor/adsb_sys_monitor.py
 ```
 
 ## Available Sections
@@ -186,13 +187,15 @@ Unknown section IDs are silently skipped.
 | `temperatures` | All thermal zone readings with threshold-based color coding (red > 80°C, yellow > 65°C, green otherwise) |
 | `cpu_freq` | Per-core clock speeds with big.LITTLE cluster labels (A7 LITTLE cores 0–3, A15 big cores 4–7) |
 | `fan` | Fan PWM duty cycle and control mode (from `/sys/class/hwmon/hwmon0/`) |
-| `services` | Status of all six feeder services via `systemctl is-active`, including crash/retry detection via `NRestarts` and age since last restart |
-| `adsb` | Live aircraft count, position count, and cumulative message total (parsed from `dump1090-fa`'s `/run/dump1090-fa/aircraft.json`) |
+| `services` | Status of all five feeder services via `systemctl is-active`, including crash/retry detection via `NRestarts` and age since last restart |
+| `adsb` | Live snapshot of tracked aircraft, position count, and callsign count (parsed from `dump1090-fa`'s `/run/dump1090-fa/aircraft.json`) |
+| `adsb_global` | All-time totals from the `adsb-stats` collector's database: message count, unique aircraft/flights, max altitude/distance (with age) |
+| `adsb_health` | `adsb-stats` service status via `systemctl is-active`, data freshness (age of the last processed message), and error count with the most recent error's age and message |
 | `network` | WiFi connection state, SSID, signal strength in dBm, connection/disconnection timestamps, and upload throughput (computed from `/sys/class/net/wlan0/statistics/tx_bytes`) |
 
 ### Monitored Services
 
-The `services` section tracks these six systemd units:
+The `services` section tracks these five systemd units:
 
 1. `dump1090-fa`
 2. `piaware`
@@ -221,6 +224,27 @@ If the file exists but shows stale data, restart `dump1090-fa`:
 ```bash
 sudo systemctl restart dump1090-fa
 ```
+
+### `adsb_global`/`adsb_health` Show "db not found or unreadable"
+
+These sections open `options.adsb_stats_db_path` (default
+`/var/lib/adsb-stats/stats.db`) directly with a read-only SQLite
+connection - they don't go through `adsb_stats` at all. The most common
+cause is permissions: the database is owned by the dedicated `adsbstats`
+system user, and `systemd/install.sh` locks it to `750`/`640` (owner
+read/write, group read-only) rather than leaving it world-readable. Add
+whichever user runs the monitor to the `adsbstats` group, then log out and
+back in:
+
+```bash
+sudo usermod -aG adsbstats <username>
+```
+
+If that's already done, confirm the path is right (`adsb_stats`'s own
+`db_path` config field can differ from this file's default) and that
+`adsb-stats` has run at least once to create the database - see
+[`adsb_stats/README.md`](../adsb_stats/README.md)'s Troubleshooting
+section for more.
 
 ### Network Section Shows "interface not found"
 

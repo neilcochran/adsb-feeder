@@ -18,7 +18,16 @@ CREATE TABLE IF NOT EXISTS global_stats (
   -- Last raw value seen from dump1090-fa's own cumulative message counter
   -- (aircraft.json's top-level "messages" field). Used to compute deltas
   -- for msg_total; NULL means "never polled yet". See ingest.py.
-  last_dump1090_msg_count INTEGER
+  last_dump1090_msg_count INTEGER,
+  -- All-time count of exceptions caught by ingest.py's process_message,
+  -- plus the most recent one's timestamp/message. process_message logs
+  -- and continues on any exception so one malformed message can't kill
+  -- the collector, but that also means a real bug would otherwise be
+  -- silently swallowed - these columns make that visible. NULL means
+  -- no error has ever been recorded.
+  error_count       INTEGER NOT NULL DEFAULT 0,
+  last_error_ts     TEXT,
+  last_error_msg    TEXT
 );
 
 -- Ensure exactly one row exists.

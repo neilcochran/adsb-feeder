@@ -117,6 +117,10 @@ def cmd_status(args: argparse.Namespace) -> None:
     print(f"\nFirst Message: {stats['first_msg_ts'] or 'N/A'}")
     print(f"Last Message: {stats['last_msg_ts'] or 'N/A'}")
 
+    print(f"\nErrors: {stats['error_count']:,}")
+    if stats["error_count"]:
+        print(f"  Last: {stats['last_error_ts']} - {stats['last_error_msg']}")
+
     print("=" * 50)
 
 

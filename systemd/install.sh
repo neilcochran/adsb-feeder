@@ -47,6 +47,10 @@ done
 chown -R adsbstats:adsbstats "$DATA_DIR"
 chown -R adsbstats:adsbstats "$CONFIG_DIR"
 chmod 755 "$TARGET_DIR"
+# Group-readable (not world-readable) rather than left at whatever the
+# ambient umask produces, so read access is an explicit, intentional grant
+# (see the "adsbstats group" step printed at the end of this script).
+chmod 750 "$DATA_DIR"
 
 # ── 3. Install code ───────────────────────────────────────────
 if [[ -d "$REPO_ROOT/adsb_stats" ]]; then
@@ -93,6 +97,8 @@ if [[ ! -f "$DB_FILE" ]]; then
 else
     echo "[install] Database already exists at $DB_FILE — skipping"
 fi
+chown adsbstats:adsbstats "$DB_FILE"
+chmod 640 "$DB_FILE"
 
 # ── 6. Install systemd unit ──────────────────────────────────
 echo "[install] Installing $SERVICE_FILE"
@@ -130,3 +136,7 @@ echo "[install] Done."
 echo "[install] Start the service with:  systemctl start adsb-stats"
 echo "[install] Check status with:       systemctl status adsb-stats"
 echo "[install] View logs with:          journalctl -u adsb-stats -f"
+echo "[install] To let another user read $DB_FILE (e.g. for the terminal"
+echo "[install]   monitor's adsb_global/adsb_health sections), run:"
+echo "[install]     sudo usermod -aG adsbstats <username>"
+echo "[install]   then have them log out and back in."

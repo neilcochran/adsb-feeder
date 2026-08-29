@@ -11,7 +11,8 @@ from .sbs_parser import parse_sbs_line
 from .db import (
     get_connection, upsert_hourly, upsert_daily, update_global_incremental,
     try_insert_aircraft, try_insert_flight, truncate_seen_today,
-    batch_update_aircraft_last_seen, get_last_dump1090_msg_count
+    batch_update_aircraft_last_seen, get_last_dump1090_msg_count,
+    update_error_stats
 )
 from .geo import haversine_distance
 from .aircraft_json import load_aircraft_json, get_message_count
@@ -50,7 +51,7 @@ class IngestLoop:
     The *_flush variants of uaircraft/uflights/alt_max/dist_max are a third
     kind: true deltas-since-last-flush, tracked separately from the hourly
     ones so an hour rollover landing between two flushes can't corrupt the
-    global counter.
+    global counter. error_count_flush follows this same flush-delta family.
 
     Global msg_total is *not* derived from counting SBS lines at all - it's
     computed from dump1090-fa's own cumulative message counter in
@@ -94,6 +95,10 @@ class IngestLoop:
 
         self.uaircraft_flush_delta = 0
         self.uflights_flush_delta = 0
+
+        self.error_count_flush = 0
+        self.last_error_ts: Optional[str] = None
+        self.last_error_msg: Optional[str] = None
 
         self.alt_max_hour: Optional[float] = None
 
@@ -240,6 +245,9 @@ class IngestLoop:
                     self._apply_distance(distance, msg.icao_hex, now_str)
 
         except Exception as e:
+            self.error_count_flush += 1
+            self.last_error_ts = self.get_current_timestamp()
+            self.last_error_msg = f"{type(e).__name__}: {e}"[:200]
             logger.error("Error processing message: %s", e)
 
     def _poll_dump1090_message_delta(self) -> int:
@@ -306,6 +314,11 @@ class IngestLoop:
                                  now_str,
                                  now_str,
                                  self.last_dump1090_msg_count)
+
+        if self.error_count_flush > 0:
+            update_error_stats(self.conn, self.error_count_flush,
+                              self.last_error_ts, self.last_error_msg)
+            self.error_count_flush = 0
 
         self.uaircraft_flush_delta = 0
         self.uflights_flush_delta = 0

@@ -421,7 +421,7 @@ For installation, configuration, usage, and troubleshooting, see
 
 ## System Monitor
 
-This repo includes `monitor/adsb-sys-monitor.py`, a real-time terminal
+This repo includes `monitor/adsb_sys_monitor.py`, a real-time terminal
 dashboard for monitoring the feeder station. It displays system uptime,
 CPU usage and frequencies, temperatures, fan speed, memory, feeder service
 status with crash/retry detection, ADS-B aircraft tracking stats, and WiFi
