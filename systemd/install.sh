@@ -89,14 +89,19 @@ else
     echo "[install] Config already exists at $CONFIG_FILE — skipping"
 fi
 
-# ── 5. Initialize the database ───────────────────────────────
+# ── 5. Initialize (or migrate) the database ──────────────────
+# Always run `init`, even for a pre-existing database: init_db()/
+# _migrate_schema() are required to be safe to re-run (see schema.sql's
+# header comment) - this is what applies newly-added columns to an
+# already-deployed database. Skipping this step here would leave a
+# redeployed database missing any migration added since it was created.
 if [[ ! -f "$DB_FILE" ]]; then
     echo "[install] Initializing database"
-    su -s /bin/bash adsbstats -c \
-        "cd $TARGET_DIR && python3 -m adsb_stats.cli init --config $CONFIG_FILE"
 else
-    echo "[install] Database already exists at $DB_FILE — skipping"
+    echo "[install] Database already exists at $DB_FILE — checking for schema updates"
 fi
+su -s /bin/bash adsbstats -c \
+    "cd $TARGET_DIR && python3 -m adsb_stats.cli init --config $CONFIG_FILE"
 chown adsbstats:adsbstats "$DB_FILE"
 chmod 640 "$DB_FILE"
 

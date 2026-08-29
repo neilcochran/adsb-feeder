@@ -49,14 +49,16 @@ MIN_FIELDS = 22
 # Physically-plausible bounds for a genuine barometric altitude reading.
 # The standard ADS-B altitude encoding (n * 25 - 1000 over an 11-bit field)
 # has a hard maximum of 50,175 ft - no validly-encoded Q=1 message can ever
-# exceed that, for any aircraft. MAX_ALTITUDE_FT is set a bit above that
-# ceiling (rather than exactly at it) to leave room for encodings this
-# parser doesn't need to know the details of, while still rejecting
-# obviously-corrupted values. MIN_ALTITUDE_FT matches the format's own
-# natural floor (n=0 gives -1000 ft) with a small margin - small negative
-# readings are real (aircraft near sea level under low-pressure conditions).
+# exceed that, for any aircraft. Unlike MIN_ALTITUDE_FT's floor, this is a
+# hard bit-width limit rather than an approximate physical one, so
+# MAX_ALTITUDE_FT is set exactly at it rather than padded - anything above
+# is provably not a valid decode, most likely a bit error (e.g. in the
+# Q-bit itself) that still happened to pass dump1090-fa's CRC check.
+# MIN_ALTITUDE_FT matches the format's own natural floor (n=0 gives
+# -1000 ft) with a small margin - small negative readings are real
+# (aircraft near sea level under low-pressure conditions).
 MIN_ALTITUDE_FT = -1500
-MAX_ALTITUDE_FT = 60000
+MAX_ALTITUDE_FT = 50175
 
 
 class SBSMessage(NamedTuple):

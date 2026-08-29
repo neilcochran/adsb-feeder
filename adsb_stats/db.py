@@ -55,6 +55,13 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
             conn.execute("ALTER TABLE global_stats ADD COLUMN last_error_ts TEXT")
             conn.execute("ALTER TABLE global_stats ADD COLUMN last_error_msg TEXT")
 
+    cursor.execute("PRAGMA table_info(hourly_stats)")
+    hourly_columns = {row[1] for row in cursor.fetchall()}
+    if "alt_max_icao" not in hourly_columns:
+        with conn:
+            conn.execute("ALTER TABLE hourly_stats ADD COLUMN alt_max_icao TEXT")
+            conn.execute("ALTER TABLE hourly_stats ADD COLUMN alt_max_ts TEXT")
+
 
 def get_connection(db_path: str) -> sqlite3.Connection:
     """Open a database connection."""
@@ -62,7 +69,8 @@ def get_connection(db_path: str) -> sqlite3.Connection:
 
 
 def upsert_hourly(conn: sqlite3.Connection, ts: str, msg_count: int, uaircraft: int,
-                  alt_max: Optional[float], dist_max_nm: Optional[float]) -> None:
+                  alt_max: Optional[float], alt_max_icao: Optional[str],
+                  alt_max_ts: Optional[str], dist_max_nm: Optional[float]) -> None:
     """
     Upsert an hourly_stats row, accumulating msg_count and taking the max of
     the running totals (uaircraft/alt_max/dist_max_nm are expected to be
@@ -74,18 +82,22 @@ def upsert_hourly(conn: sqlite3.Connection, ts: str, msg_count: int, uaircraft: 
         msg_count: Delta message count since the last write for this hour.
         uaircraft: Cumulative unique-aircraft count so far this hour.
         alt_max: Cumulative max altitude (ft) so far this hour, or None.
+        alt_max_icao: ICAO hex of the aircraft holding alt_max, or None.
+        alt_max_ts: Timestamp alt_max was recorded, or None.
         dist_max_nm: Cumulative max distance (nm) so far this hour, or None.
     """
     with conn:
         conn.execute("""
-            INSERT INTO hourly_stats (ts, msg_count, uaircraft, alt_max, dist_max_nm)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO hourly_stats (ts, msg_count, uaircraft, alt_max, alt_max_icao, alt_max_ts, dist_max_nm)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(ts) DO UPDATE SET
                 msg_count = msg_count + excluded.msg_count,
                 uaircraft = MAX(uaircraft, excluded.uaircraft),
-                alt_max = MAX(alt_max, excluded.alt_max),
+                alt_max = CASE WHEN excluded.alt_max > alt_max OR alt_max IS NULL THEN excluded.alt_max ELSE alt_max END,
+                alt_max_icao = CASE WHEN excluded.alt_max > alt_max OR alt_max IS NULL THEN excluded.alt_max_icao ELSE alt_max_icao END,
+                alt_max_ts = CASE WHEN excluded.alt_max > alt_max OR alt_max IS NULL THEN excluded.alt_max_ts ELSE alt_max_ts END,
                 dist_max_nm = MAX(dist_max_nm, excluded.dist_max_nm)
-        """, (ts, msg_count, uaircraft, alt_max, dist_max_nm))
+        """, (ts, msg_count, uaircraft, alt_max, alt_max_icao, alt_max_ts, dist_max_nm))
 
 
 def upsert_daily(conn: sqlite3.Connection, date: str, msg_count: int, uaircraft: int,

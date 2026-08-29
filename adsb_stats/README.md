@@ -220,6 +220,8 @@ Three tables track statistics at different granularities:
   midnight.
 - **`hourly_stats`** - one row per UTC hour; a lighter subset (message
   count, unique aircraft, altitude/distance maxima) for trend charts.
+  Altitude maxima carry which aircraft and when, same as `daily_stats`;
+  distance maxima don't have per-hour attribution.
 
 Unique aircraft are deduplicated by ICAO hex address for the lifetime of
 the database. Unique flights are deduplicated by (ICAO, callsign) per day;

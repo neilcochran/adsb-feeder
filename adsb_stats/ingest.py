@@ -101,6 +101,8 @@ class IngestLoop:
         self.last_error_msg: Optional[str] = None
 
         self.alt_max_hour: Optional[float] = None
+        self.alt_max_hour_icao: Optional[str] = None
+        self.alt_max_hour_ts: Optional[str] = None
 
         self.alt_max_day: Optional[float] = None
         self.alt_max_day_icao: Optional[str] = None
@@ -143,11 +145,14 @@ class IngestLoop:
 
             upsert_hourly(self.conn, self.current_utc_hour,
                          self.msg_count_hour, self.uaircraft_hour,
-                         self.alt_max_hour, self.dist_max_hour)
+                         self.alt_max_hour, self.alt_max_hour_icao, self.alt_max_hour_ts,
+                         self.dist_max_hour)
 
             self.msg_count_hour = 0
             self.uaircraft_hour = 0
             self.alt_max_hour = None
+            self.alt_max_hour_icao = None
+            self.alt_max_hour_ts = None
             self.dist_max_hour = None
 
         if self.current_utc_date and self.current_utc_date != current_date:
@@ -177,6 +182,8 @@ class IngestLoop:
         """Fold a new altitude reading into the hour/day/flush maxima."""
         if self.alt_max_hour is None or altitude_ft > self.alt_max_hour:
             self.alt_max_hour = altitude_ft
+            self.alt_max_hour_icao = icao_hex
+            self.alt_max_hour_ts = now_str
 
         if self.alt_max_day is None or altitude_ft > self.alt_max_day:
             self.alt_max_day = altitude_ft
@@ -293,7 +300,8 @@ class IngestLoop:
         hour_key = self.get_current_hour_key()
         upsert_hourly(self.conn, hour_key,
                      self.msg_count_hour, self.uaircraft_hour,
-                     self.alt_max_hour, self.dist_max_hour)
+                     self.alt_max_hour, self.alt_max_hour_icao, self.alt_max_hour_ts,
+                     self.dist_max_hour)
         self.msg_count_hour = 0
 
         day_key = self.get_current_day_key()
