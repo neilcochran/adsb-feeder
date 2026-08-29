@@ -1,5 +1,5 @@
 # Snapshot of /etc/systemd/system/fr24feed.service
-# Source: FR24 installer script (repo.feed.flightradar24.com)
+# Source: FR24 installer script (repo-feed.flightradar24.com)
 # DO NOT INSTALL THIS FILE — it is managed by the fr24feed installer.
 # Preserved here for reference only.
 

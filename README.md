@@ -78,16 +78,22 @@ All services are enabled at boot via `systemctl enable`.
 | `adsbexchange-feed` | Feeds decoded data to ADS-B Exchange |
 | `adsbexchange-mlat` | MLAT client for ADS-B Exchange |
 
+### ADS-B Statistics Collector
+
+| Service | Purpose |
+|---|---|
+| `adsb-stats` | Collects aggregate ADS-B statistics from dump1090-fa (this repo's own tooling, not a feeder) |
+
 ### Check All Services
 
 ```bash
-systemctl status dump1090-fa piaware generate-pirehose-cert fr24feed adsbexchange-feed adsbexchange-mlat
+systemctl status dump1090-fa piaware generate-pirehose-cert fr24feed adsbexchange-feed adsbexchange-mlat adsb-stats
 ```
 
 ### Check If Enabled At Boot
 
 ```bash
-systemctl is-enabled dump1090-fa piaware generate-pirehose-cert fr24feed adsbexchange-feed adsbexchange-mlat
+systemctl is-enabled dump1090-fa piaware generate-pirehose-cert fr24feed adsbexchange-feed adsbexchange-mlat adsb-stats
 ```
 
 ## MLAT Configuration
@@ -217,12 +223,17 @@ single Debian package.
 cd ~
 git clone https://github.com/flightaware/piaware_builder.git
 cd piaware_builder
-./sensible-build.sh trixie
-cd package-trixie
+./sensible-build.sh $(lsb_release -cs)
+cd package-$(lsb_release -cs)
 dpkg-buildpackage -b --no-sign
 cd ..
 sudo dpkg -i piaware_*.deb
 ```
+
+Installing this package also installs and enables `generate-pirehose-cert`
+automatically - it's set up as a systemd dependency (`Wants=`) of
+`piaware.service`, so it runs on its own to generate PiAware's TLS
+certificate. No separate install or manual invocation needed.
 
 > **Note:** If there are runtime dependency issues with `rsyslog`, remove
 > piaware, install deps separately, then reinstall:
@@ -254,7 +265,7 @@ sudo dpkg -i piaware_*.deb
 ### Step 7: Install and Configure fr24feed (Flightradar24)
 
 ```bash
-wget -qO- https://repo.feed.flightradar24.com/rpi/feeds/installer.sh | sudo sh -s
+wget -qO- https://repo-feed.flightradar24.com/rpi/feeds/installer.sh | sudo sh -s
 ```
 
 The install script auto-detects dump1090-fa and autoconfigures fr24feed
@@ -271,7 +282,7 @@ Answer: MLAT = No, MLAT-without-GPS = No, receiver = existing dump1090.
 > **Alternative APT repo method:**
 >
 > ```bash
-> sudo bash -c 'echo "deb [trusted=yes] http://repo.feed.flightradar24.com/flightradar24 raspberrypi-stable main" > /etc/apt/sources.list.d/fr24.list'
+> sudo bash -c 'echo "deb [trusted=yes] https://repo-feed.flightradar24.com/flightradar24 raspberrypi-stable main" > /etc/apt/sources.list.d/fr24.list'
 > sudo apt update
 > sudo apt install -y fr24feed
 > ```
@@ -351,14 +362,33 @@ sudo journalctl -u adsbexchange-mlat -n 50
 sudo systemctl restart adsbexchange-feed adsbexchange-mlat
 ```
 
+### ADS-B Statistics Collector
+
+```bash
+# Status (numbers, not systemd state - see below for that)
+cd /opt/adsb-feeder
+sudo -u adsbstats python3 -m adsb_stats.cli status --config /etc/adsb-stats/config.json
+
+# Logs
+sudo journalctl -u adsb-stats -f
+
+# Configuration
+cat /etc/adsb-stats/config.json
+
+# Restart
+sudo systemctl restart adsb-stats
+```
+
+See [`adsb_stats/README.md`](adsb_stats/README.md) for full setup, configuration, and troubleshooting.
+
 ### All Services
 
 ```bash
 # Status
-systemctl status dump1090-fa piaware generate-pirehose-cert fr24feed adsbexchange-feed adsbexchange-mlat
+systemctl status dump1090-fa piaware generate-pirehose-cert fr24feed adsbexchange-feed adsbexchange-mlat adsb-stats
 
 # Restart everything
-sudo systemctl restart dump1090-fa piaware fr24feed adsbexchange-feed adsbexchange-mlat
+sudo systemctl restart dump1090-fa piaware fr24feed adsbexchange-feed adsbexchange-mlat adsb-stats
 
 # Verify dongle is visible
 lsusb
@@ -378,6 +408,17 @@ lsmod | grep dvb_usb
 | ADS-B Exchange myIP | https://adsbexchange.com/myip/ |
 | ADS-B Exchange sync map | https://map.adsbexchange.com/sync/ |
 
+## Statistics Collector
+
+This repo includes `adsb_stats/`, a background collector that connects to
+dump1090-fa's SBS output and maintains aggregate statistics - message
+counts, unique aircraft/flights, and altitude/reception-distance records -
+in a local SQLite database, deployed as its own systemd service
+(`adsb-stats`).
+
+For installation, configuration, usage, and troubleshooting, see
+[`adsb_stats/README.md`](adsb_stats/README.md).
+
 ## System Monitor
 
 This repo includes `monitor/adsb-sys-monitor.py`, a real-time terminal
@@ -387,7 +428,7 @@ status with crash/retry detection, ADS-B aircraft tracking stats, and WiFi
 connectivity with upload throughput.
 
 For installation, configuration, usage, and troubleshooting, see
-[`monitor/INSTALL.md`](monitor/INSTALL.md).
+[`monitor/README.md`](monitor/README.md).
 
 ## Useful Links
 

@@ -32,7 +32,7 @@ All services are enabled at boot via `systemctl enable`.
 |---|---|---|---|
 | `dump1090-fa` | `dump1090` | on-failure / 30s | [flightaware/dump1090](https://github.com/flightaware/dump1090) |
 | `piaware` | `piaware` | on-failure / 30s, watchdog 120s | [flightaware/piaware_builder](https://github.com/flightaware/piaware_builder) |
-| `fr24feed` | `fr24`/`fr24` | always | [FR24 installer](https://repo.feed.flightradar24.com/rpi/feeds/installer.sh) |
+| `fr24feed` | `fr24`/`fr24` | always | [FR24 installer](https://repo-feed.flightradar24.com/rpi/feeds/installer.sh) |
 | `adsbexchange-feed` | `adsbexchange` | always / 30s | [ADSBX feed.sh](https://adsbexchange.com/feed.sh) |
 | `adsbexchange-mlat` | `adsbexchange` | always / 30s | [ADSBX feed.sh](https://adsbexchange.com/feed.sh) |
 | `generate-pirehose-cert` | `root` | oneshot, RemainAfterExit | shipped with piaware package |
