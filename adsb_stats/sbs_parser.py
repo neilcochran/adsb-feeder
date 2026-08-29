@@ -46,6 +46,18 @@ FIELD_LAT = 14
 FIELD_LON = 15
 MIN_FIELDS = 22
 
+# Physically-plausible bounds for a genuine barometric altitude reading.
+# The standard ADS-B altitude encoding (n * 25 - 1000 over an 11-bit field)
+# has a hard maximum of 50,175 ft - no validly-encoded Q=1 message can ever
+# exceed that, for any aircraft. MAX_ALTITUDE_FT is set a bit above that
+# ceiling (rather than exactly at it) to leave room for encodings this
+# parser doesn't need to know the details of, while still rejecting
+# obviously-corrupted values. MIN_ALTITUDE_FT matches the format's own
+# natural floor (n=0 gives -1000 ft) with a small margin - small negative
+# readings are real (aircraft near sea level under low-pressure conditions).
+MIN_ALTITUDE_FT = -1500
+MAX_ALTITUDE_FT = 60000
+
 
 class SBSMessage(NamedTuple):
     """Fields extracted from one SBS "MSG" line."""
@@ -81,17 +93,21 @@ def parse_sbs_line(line: str) -> Optional[SBSMessage]:
     altitude_ft = None
     if fields[FIELD_ALTITUDE].strip():
         try:
-            altitude_ft = int(float(fields[FIELD_ALTITUDE]))
+            parsed_altitude = int(float(fields[FIELD_ALTITUDE]))
+            if MIN_ALTITUDE_FT <= parsed_altitude <= MAX_ALTITUDE_FT:
+                altitude_ft = parsed_altitude
         except ValueError:
             pass
 
     lat = lon = None
     if fields[FIELD_LAT].strip() and fields[FIELD_LON].strip():
         try:
-            lat = float(fields[FIELD_LAT])
-            lon = float(fields[FIELD_LON])
+            parsed_lat = float(fields[FIELD_LAT])
+            parsed_lon = float(fields[FIELD_LON])
+            if -90.0 <= parsed_lat <= 90.0 and -180.0 <= parsed_lon <= 180.0:
+                lat, lon = parsed_lat, parsed_lon
         except ValueError:
-            lat = lon = None
+            pass
 
     return SBSMessage(
         icao_hex=icao_hex,

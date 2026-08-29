@@ -18,6 +18,13 @@ from .aircraft_json import load_aircraft_json, get_message_count
 
 logger = logging.getLogger(__name__)
 
+# Radio-horizon line-of-sight range tops out well under this even for a
+# receiver/aircraft both at generous altitude, and exceptional atmospheric
+# ducting DX reception rarely exceeds ~600km - this ceiling is deliberately
+# generous so it only rejects clearly-corrupted position data (e.g. a bad
+# CPR decode on dump1090-fa's side), never a genuine reading.
+MAX_PLAUSIBLE_DISTANCE_KM = 1000
+
 
 class IngestLoop:
     """Main ingestion loop coordinating the SBS client, parser, and database.
@@ -229,7 +236,8 @@ class IngestLoop:
                 distance = haversine_distance(
                     self.receiver_lat, self.receiver_lon, msg.lat, msg.lon
                 )
-                self._apply_distance(distance, msg.icao_hex, now_str)
+                if distance <= MAX_PLAUSIBLE_DISTANCE_KM:
+                    self._apply_distance(distance, msg.icao_hex, now_str)
 
         except Exception as e:
             logger.error("Error processing message: %s", e)
