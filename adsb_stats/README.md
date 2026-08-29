@@ -136,6 +136,28 @@ python3 -m adsb_stats.cli export --table daily --format json
 python3 -m adsb_stats.cli export --table hourly --format csv --output hourly.csv
 ```
 
+### `query`
+
+Run a saved `.sql` query from `adsb_stats/sql/queries/` and print its
+results, or list what's available:
+
+```bash
+python3 -m adsb_stats.cli query --list
+python3 -m adsb_stats.cli query <name> [--format {table,csv,json}] [--output PATH]
+```
+
+```bash
+python3 -m adsb_stats.cli query busiest_hours
+python3 -m adsb_stats.cli query daily_summary --format json --output daily.json
+```
+
+Saved queries are plain `.sql` files named `<name>.sql`; a leading `--`
+comment line becomes the query's one-line description in `--list` output.
+Add your own by dropping a file in `adsb_stats/sql/queries/` - no code
+change needed. Only a single `SELECT`/`WITH`/`EXPLAIN` statement is
+allowed; anything else (`INSERT`/`UPDATE`/`DELETE`/etc.) is rejected before
+it reaches the database.
+
 ### `--version`
 
 ```bash

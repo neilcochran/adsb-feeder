@@ -7,6 +7,8 @@ from typing import Optional
 
 VALID_EXPORT_TABLES = frozenset({"global_stats", "daily_stats", "hourly_stats"})
 
+_READ_ONLY_PREFIXES = ("select", "with", "explain")
+
 
 def init_db(db_path: str) -> None:
     """
@@ -322,6 +324,48 @@ def get_table_rows(conn: sqlite3.Connection, table_name: str) -> tuple[list[str]
     cursor.execute(f"SELECT * FROM {table_name}")
     rows = cursor.fetchall()
     columns = [description[0] for description in cursor.description]
+    return columns, rows
+
+
+def _strip_sql_comments(sql: str) -> str:
+    """
+    Strip `--` line comments, for checking a statement's leading keyword.
+
+    Line-based only (doesn't understand string literals containing "--"),
+    which is fine for its one caller, run_query()'s read-only check - the
+    original sql, comments included, is still what actually gets executed;
+    SQLite skips `--` comments on its own.
+    """
+    return "\n".join(line.split("--", 1)[0] for line in sql.splitlines()).strip()
+
+
+def run_query(conn: sqlite3.Connection, sql: str) -> tuple[list[str], list[tuple]]:
+    """
+    Execute a saved read-only query and return its results.
+
+    This is the enforcement point for the `query` CLI command's saved .sql
+    files: the same allowlist-in-db.py pattern VALID_EXPORT_TABLES uses for
+    table names, applied here to the statement's leading keyword instead.
+
+    Args:
+        conn: Open database connection.
+        sql: SQL text to execute - must be a single SELECT/WITH/EXPLAIN
+            statement (raw text, `--` comments included; SQLite skips
+            those itself).
+
+    Returns:
+        (column_names, rows).
+
+    Raises:
+        ValueError: If sql isn't a SELECT/WITH/EXPLAIN statement.
+    """
+    if not _strip_sql_comments(sql).lower().startswith(_READ_ONLY_PREFIXES):
+        raise ValueError("Saved queries must be a single SELECT/WITH/EXPLAIN statement")
+
+    cursor = conn.cursor()
+    cursor.execute(sql)
+    rows = cursor.fetchall()
+    columns = [description[0] for description in cursor.description] if cursor.description else []
     return columns, rows
 
 

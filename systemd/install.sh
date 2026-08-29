@@ -106,7 +106,14 @@ cp "$REPO_ROOT/systemd/$SERVICE_FILE" /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable adsb-stats
 
-# ── 7. Verify full service set ───────────────────────────────
+# ── 7. Install CLI wrapper ────────────────────────────────────
+if [[ -f "$REPO_ROOT/bin/adsb-stats" ]]; then
+    echo "[install] Linking adsb-stats CLI wrapper to /usr/local/bin/"
+    chmod +x "$TARGET_DIR/bin/adsb-stats"
+    ln -sf "$TARGET_DIR/bin/adsb-stats" /usr/local/bin/adsb-stats
+fi
+
+# ── 8. Verify full service set ───────────────────────────────
 echo ""
 echo "── Service Verification ───────────────────────────────────"
 
@@ -136,6 +143,7 @@ echo "[install] Done."
 echo "[install] Start the service with:  systemctl start adsb-stats"
 echo "[install] Check status with:       systemctl status adsb-stats"
 echo "[install] View logs with:          journalctl -u adsb-stats -f"
+echo "[install] Query stats directly with:  adsb-stats status"
 echo "[install] To let another user read $DB_FILE (e.g. for the terminal"
 echo "[install]   monitor's adsb_global/adsb_health sections), run:"
 echo "[install]     sudo usermod -aG adsbstats <username>"

@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# adsb-stats - convenience wrapper for the adsb_stats CLI on the deployed
+# station. Always targets the production database as the adsbstats user.
+#
+# Installed to /usr/local/bin/adsb-stats (symlink) by systemd/install.sh.
+
+set -euo pipefail
+
+cd /opt/adsb-feeder
+exec sudo -u adsbstats python3 -m adsb_stats.cli "$@" --config /etc/adsb-stats/config.json

@@ -43,8 +43,6 @@ All services are enabled at boot via `systemctl enable`.
 - **Upstream** (installed by package scripts, do not edit):
   `dump1090-fa`, `piaware`, `fr24feed`, `adsbexchange-feed`, `adsbexchange-mlat`,
   `generate-pirehose-cert`.
-  Exact unit file snapshots are preserved in `reference/` for
-  documentation purposes only.
 
 - **Owned by this repo**:
   `adsb-stats.service` — install via `install.sh`.

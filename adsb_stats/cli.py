@@ -4,15 +4,16 @@ import argparse
 import json
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from . import __version__
 from .config import load_config, save_config, DEFAULT_CONFIG_PATH
 from .db import (
     init_db, get_connection, get_global_stats, get_table_rows,
-    export_table_to_csv, export_table_to_json,
+    export_table_to_csv, export_table_to_json, run_query,
 )
 from .ingest import IngestLoop
+from .queries import QUERIES_DIR, list_saved_queries, load_saved_query
 
 TABLE_MAP = {
     "global": "global_stats",
@@ -158,6 +159,81 @@ def cmd_export(args: argparse.Namespace) -> None:
         conn.close()
 
 
+def cmd_query(args: argparse.Namespace) -> None:
+    """Run a saved .sql query and print its results, or list available ones."""
+    if args.list:
+        queries = list_saved_queries()
+        if not queries:
+            print(f"No saved queries in {QUERIES_DIR}")
+            return
+        for name, description in queries:
+            print(f"{name:<24} {description}")
+        return
+
+    if not args.name:
+        print("Specify a query name, or --list to see available queries.")
+        return
+
+    sql = load_saved_query(args.name)
+    if sql is None:
+        print(f"No saved query named '{args.name}' in {QUERIES_DIR}")
+        return
+
+    config = load_config(args.config)
+    _configure_logging(config)
+    conn = get_connection(config["db_path"])
+    try:
+        columns, rows = run_query(conn, sql)
+    except ValueError as e:
+        print(f"Error: {e}")
+        return
+    finally:
+        conn.close()
+
+    _print_query_results(columns, rows, args.format, args.output)
+
+
+def _format_table(columns: list[str], rows: list[tuple]) -> str:
+    """Render columns/rows as a simple fixed-width text table."""
+    if not rows:
+        return "(no rows)"
+
+    str_rows = [[str(v) if v is not None else "" for v in row] for row in rows]
+    widths = [len(c) for c in columns]
+    for row in str_rows:
+        for i, v in enumerate(row):
+            widths[i] = max(widths[i], len(v))
+
+    def format_row(values: list[str]) -> str:
+        return "  ".join(v.ljust(widths[i]) for i, v in enumerate(values))
+
+    lines = [format_row(columns), "  ".join("-" * w for w in widths)]
+    lines.extend(format_row(row) for row in str_rows)
+    return "\n".join(lines)
+
+
+def _print_query_results(columns: list[str], rows: list[tuple], fmt: str, output: Optional[str]) -> None:
+    """Render query results in the requested format, to a file or stdout."""
+    if fmt == "json":
+        text = json.dumps([dict(zip(columns, row)) for row in rows], indent=2)
+    elif fmt == "csv":
+        lines = [",".join(columns)]
+        lines.extend(",".join(str(v) for v in row) for row in rows)
+        text = "\n".join(lines)
+    else:
+        text = _format_table(columns, rows)
+
+    if output:
+        with open(output, "w") as f:
+            f.write(text + "\n")
+        print(f"Wrote {len(rows)} row(s) to {output}")
+        return
+
+    print(text)
+    if fmt == "table":
+        print(f"\n({len(rows)} row(s))")
+
+
 def main() -> None:
     """Entry point for `python -m adsb_stats.cli`."""
     parser = argparse.ArgumentParser(
@@ -195,6 +271,16 @@ def main() -> None:
                               help="Output format")
     export_parser.add_argument("--output", "-o", help="Output file path")
     export_parser.set_defaults(func=cmd_export)
+
+    query_parser = subparsers.add_parser("query", help="Run a saved SQL query")
+    query_parser.add_argument("name", nargs="?", help="Saved query name (see --list)")
+    query_parser.add_argument("--list", "-l", action="store_true", help="List available saved queries")
+    query_parser.add_argument("--config", "-c", help="Config file path")
+    query_parser.add_argument("--format", "-f", default="table",
+                             choices=["table", "csv", "json"],
+                             help="Output format (default: table)")
+    query_parser.add_argument("--output", "-o", help="Output file path")
+    query_parser.set_defaults(func=cmd_query)
 
     args = parser.parse_args()
 

@@ -146,24 +146,24 @@ the adsb-stats collector sections (`adsb_global`/`adsb_health`):
     "right": ["adsb_live", "adsb_global", "adsb_health", "feeder_services"]
   },
   "options": {
-    "interval": 15
+    "interval": 5
   }
 }
 ```
 
-**`config.json`** — Second example config; 2-column layout with `fan` but
-without the adsb-stats collector sections:
+**`config.json`** — Second example config; 2-column layout with `fan` and
+`cpu_freq`, also including the adsb-stats collector sections:
 
 ```json
 {
   "version": "1.0",
   "layout": {
     "columns": 2,
-    "left": ["uptime", "cpu_usage", "memory", "temperatures", "fan"],
-    "right": ["adsb_live", "feeder_services", "network"]
+    "left": ["uptime", "cpu_usage", "memory", "fan", "temperatures", "cpu_freq"],
+    "right": ["adsb_live", "adsb_global", "adsb_health", "feeder_services", "network"]
   },
   "options": {
-    "interval": 6
+    "interval": 5
   }
 }
 ```
