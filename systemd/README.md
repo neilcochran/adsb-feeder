@@ -58,7 +58,7 @@ network-online.target
             ├── fr24feed          (After=network-online.target; reads AVR port 30002)
             ├── adsbexchange-feed  (After=network.target; reads Beast port 30005)
             ├── adsbexchange-mlat  (After=network.target; reads Beast port 30005)
-            └── adsb-stats        (After=dump1090-fa; reads Beast port 30005)
+            └── adsb-stats        (After=dump1090-fa; reads SBS port 30003)
 ```
 
 `adsb-stats` uses `Wants=dump1090-fa.service` (not `Requires=`) so that a

@@ -13,7 +13,7 @@
 # See README.md in this directory for the full service topology.
 
 [Unit]
-Description=ADS-B Statistics Collector (Beast stream → SQLite)
+Description=ADS-B Statistics Collector (SBS stream -> SQLite)
 Documentation=https://github.com/neilcochran/adsb-feeder/blob/main/systemd/README.md
 After=dump1090-fa.service network-online.target
 Wants=dump1090-fa.service
@@ -23,7 +23,11 @@ Type=simple
 User=adsbstats
 Group=adsbstats
 WorkingDirectory=/opt/adsb-feeder
-ExecStart=/usr/bin/python3 -m adsb_stats.cli run
+# Without this, stdout is block-buffered under systemd (unlike stderr, which
+# has been line-buffered by default since Python 3.9), so cmd_run's print()
+# startup banner sits invisible in the journal until the process exits.
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 -m adsb_stats.cli run --config /etc/adsb-stats/config.json
 Restart=on-failure
 RestartSec=10
 Nice=5

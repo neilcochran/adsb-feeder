@@ -67,8 +67,9 @@ if [[ ! -f "$CONFIG_FILE" ]]; then
     echo "[install] Creating default config at $CONFIG_FILE"
     cat > "$CONFIG_FILE" <<'JSON'
 {
-  "beast_host": "127.0.0.1",
-  "beast_port": 30005,
+  "sbs_host": "127.0.0.1",
+  "sbs_port": 30003,
+  "aircraft_json_path": "/run/dump1090-fa/aircraft.json",
   "db_path": "/var/lib/adsb-stats/stats.db",
   "receiver_lat": null,
   "receiver_lon": null,
