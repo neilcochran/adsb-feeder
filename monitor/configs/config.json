@@ -6,16 +6,19 @@
       "uptime",
       "cpu_usage",
       "memory",
+      "fan",
       "temperatures",
-      "fan"
+      "cpu_freq"
     ],
     "right": [
-      "adsb",
-      "services",
+      "adsb_live",
+      "adsb_global",
+      "adsb_health",
+      "feeder_services",
       "network"
     ]
   },
   "options": {
-    "interval": 6
+    "interval": 5
   }
 }

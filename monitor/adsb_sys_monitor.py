@@ -13,13 +13,13 @@ Configuration:
     Different config files can be used for different screen sizes/setups.
 
 Usage:
-    python3 adsb_sys_monitor.py                       # auto-detect config
-    python3 adsb_sys_monitor.py --config mobile.json  # specific config
-    python3 adsb_sys_monitor.py -i 1                  # 1s refresh override
+    python3 adsb_sys_monitor.py                           # auto-detect config
+    python3 adsb_sys_monitor.py --config stationary.json  # specific config
+    python3 adsb_sys_monitor.py -i 1                      # 1s refresh override
 
 Available sections:
-    uptime, cpu_usage, memory, temperatures, cpu_freq, fan, services,
-    adsb, adsb_global, adsb_health, network
+    uptime, cpu_usage, memory, temperatures, cpu_freq, fan, feeder_services,
+    adsb_live, adsb_global, adsb_health, network
 
 Config search order:
     ~/.config/adsb-monitor/config.json
@@ -106,7 +106,7 @@ DEFAULT_CONFIG = {
     "layout": {
         "columns": 2,
         "left": ["uptime", "cpu_usage", "memory", "temperatures"],
-        "right": ["services", "network"]
+        "right": ["feeder_services", "network"]
     },
     "options": {
         "interval": 2,
@@ -410,7 +410,7 @@ def render_memory() -> list[str]:
 
     return lines
 
-def render_services() -> list[str]:
+def render_feeder_services() -> list[str]:
     """Return lines showing systemctl status and restart count for feeder services."""
     lines = _section_header("Feeder Services")
 
@@ -519,7 +519,7 @@ def render_fan_speed() -> list[str]:
 
     return lines
 
-def render_adsb_stats() -> list[str]:
+def render_adsb_live() -> list[str]:
     """Return lines showing a live snapshot of tracked aircraft from dump1090-fa's aircraft.json."""
     lines = _section_header("Live Aircraft")
 
@@ -554,7 +554,7 @@ def render_adsb_global(db_path: Path) -> list[str]:
 
     Reads adsb-stats' own SQLite database rather than dump1090-fa's
     aircraft.json - this is the collector's persisted, restart-tolerant
-    totals, not a live snapshot (that's what the "adsb" section is for).
+    totals, not a live snapshot (that's what the "adsb_live" section is for).
 
     Args:
         db_path: Filesystem path to adsb-stats' SQLite database.
@@ -890,7 +890,7 @@ def _read_adsb_stats_row(db_path: Path) -> dict[str, Any] | None:
     Opens the database read-only so this process never creates, writes to,
     or locks it - adsb-stats owns all writes. A missing file, an
     unreadable file, and a not-yet-initialized database all collapse to
-    the same None return (same handling as render_adsb_stats' missing
+    the same None return (same handling as render_adsb_live's missing
     aircraft.json).
 
     Args:
@@ -1016,10 +1016,10 @@ SECTION_RENDERERS: dict[str, Callable[..., list[str]]] = {
     "memory": render_memory,
     "temperatures": render_temperatures,
     "cpu_freq": render_cpu_frequencies,
-    "services": render_services,
+    "feeder_services": render_feeder_services,
     "network": render_network,  # special-cased: needs wifi/upload/interval
     "fan": render_fan_speed,
-    "adsb": render_adsb_stats,
+    "adsb_live": render_adsb_live,
     "adsb_global": render_adsb_global,  # special-cased: needs db_path
     "adsb_health": render_adsb_health,  # special-cased: needs db_path
 }
@@ -1146,17 +1146,17 @@ def parse_args() -> argparse.Namespace:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
-            "  %(prog)s                          Auto-detect config, 2s interval\n"
-            "  %(prog)s --config mobile.json     Use specific config file\n"
-            "  %(prog)s -i 1                     1-second refresh override\n"
+            "  %(prog)s                              Auto-detect config, 2s interval\n"
+            "  %(prog)s --config stationary.json     Use specific config file\n"
+            "  %(prog)s -i 1                         1-second refresh override\n"
             "\n"
             "Config files are searched in this order:\n"
             "  ~/.config/adsb-monitor/config.json\n"
             "  ./config.json\n"
             "\n"
             "Available sections: uptime, cpu_usage, memory, temperatures,\n"
-            "                   cpu_freq, services, network, fan, adsb,\n"
-            "                   adsb_global, adsb_health\n"
+            "                   cpu_freq, feeder_services, network, fan,\n"
+            "                   adsb_live, adsb_global, adsb_health\n"
         ),
     )
     parser.add_argument(

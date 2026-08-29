@@ -111,7 +111,7 @@ If none are found, a default config is auto-created at
   "layout": {
     "columns": 2,
     "left": ["uptime", "cpu_usage", "memory", "temperatures"],
-    "right": ["services", "network"]
+    "right": ["feeder_services", "network"]
   },
   "options": {
     "interval": 2
@@ -132,34 +132,36 @@ If none are found, a default config is auto-created at
 
 The repo ships with two example configs in `monitor/configs/`:
 
-**`stationary.json`** — Full 2-column layout for the 24/7 stationary box:
+**`stationary.json`** — 2-column layout for the 24/7 stationary box, including
+the adsb-stats collector sections (`adsb_global`/`adsb_health`):
 
 ```json
 {
   "version": "1.0",
   "layout": {
     "columns": 2,
-    "left": ["uptime", "cpu_usage", "memory", "temperatures", "cpu_freq", "fan"],
-    "right": ["adsb", "adsb_global", "adsb_health", "services", "network"]
+    "left": ["uptime", "cpu_usage", "memory", "temperatures", "network"],
+    "right": ["adsb_live", "adsb_global", "adsb_health", "feeder_services"]
   },
   "options": {
-    "interval": 2
+    "interval": 15
   }
 }
 ```
 
-**`mobile.json`** — Compact 1-column layout for the powerbank unit:
+**`config.json`** — Second example config; 2-column layout with `fan` but
+without the adsb-stats collector sections:
 
 ```json
 {
   "version": "1.0",
   "layout": {
-    "columns": 1,
-    "left": ["uptime", "cpu_usage", "memory", "temperatures", "services", "adsb"],
-    "right": []
+    "columns": 2,
+    "left": ["uptime", "cpu_usage", "memory", "temperatures", "fan"],
+    "right": ["adsb_live", "feeder_services", "network"]
   },
   "options": {
-    "interval": 2
+    "interval": 6
   }
 }
 ```
@@ -188,15 +190,15 @@ Unknown section IDs are silently skipped.
 | `temperatures` | All thermal zone readings with threshold-based color coding (red > 80°C, yellow > 65°C, green otherwise). Set `options.temp_simple` to `true` for a single averaged line instead |
 | `cpu_freq` | Per-core clock speeds with big.LITTLE cluster labels (A7 LITTLE cores 0–3, A15 big cores 4–7) |
 | `fan` | Fan PWM duty cycle and control mode (from `/sys/class/hwmon/hwmon0/`) |
-| `services` | Status of all five feeder services via `systemctl is-active`, including crash/retry detection via `NRestarts` and age since last restart |
-| `adsb` | Live snapshot of tracked aircraft, position count, and callsign count (parsed from `dump1090-fa`'s `/run/dump1090-fa/aircraft.json`) |
+| `feeder_services` | Status of all five feeder services via `systemctl is-active`, including crash/retry detection via `NRestarts` and age since last restart. Does not include the `adsb-stats` collector service - see `adsb_health` |
+| `adsb_live` | Live snapshot of tracked aircraft, position count, and callsign count (parsed from `dump1090-fa`'s `/run/dump1090-fa/aircraft.json`) |
 | `adsb_global` | All-time totals from the `adsb-stats` collector's database: message count, unique aircraft/flights, max altitude/distance (with age) |
 | `adsb_health` | `adsb-stats` service status via `systemctl is-active`, data freshness (age of the last processed message), and error count with the most recent error's age and message |
 | `network` | WiFi connection state, SSID, signal strength in dBm, connection/disconnection timestamps, and upload throughput (computed from `/sys/class/net/wlan0/statistics/tx_bytes`) |
 
 ### Monitored Services
 
-The `services` section tracks these five systemd units:
+The `feeder_services` section tracks these five systemd units:
 
 1. `dump1090-fa`
 2. `piaware`
@@ -211,9 +213,9 @@ Retry indicators appear when `NRestarts > 0`, color-coded:
 
 ## Troubleshooting
 
-### ADS-B Stats Show "dump1090-fa not running"
+### "Live Aircraft" Section Shows "dump1090-fa not running"
 
-The `adsb` section reads `/run/dump1090-fa/aircraft.json`. Ensure:
+The `adsb_live` section reads `/run/dump1090-fa/aircraft.json`. Ensure:
 
 ```bash
 systemctl status dump1090-fa

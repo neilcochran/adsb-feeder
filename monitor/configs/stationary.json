@@ -10,13 +10,13 @@
       "network"
     ],
     "right": [
-      "adsb",
+      "adsb_live",
       "adsb_global",
       "adsb_health",
-      "services"
+      "feeder_services"
     ]
   },
   "options": {
-    "interval": 15
+    "interval": 5
   }
 }
