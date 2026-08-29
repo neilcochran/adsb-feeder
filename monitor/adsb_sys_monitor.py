@@ -110,7 +110,8 @@ DEFAULT_CONFIG = {
     },
     "options": {
         "interval": 2,
-        "adsb_stats_db_path": "/var/lib/adsb-stats/stats.db"
+        "adsb_stats_db_path": "/var/lib/adsb-stats/stats.db",
+        "temp_simple": False
     }
 }
 
@@ -254,10 +255,16 @@ def render_uptime() -> list[str]:
 
     return lines
 
-def render_temperatures() -> list[str]:
-    """Return lines showing all thermal zone temperatures with color coding."""
-    lines = _section_header("Temperatures")
+def _read_thermal_zones() -> list[tuple[str, float | None]]:
+    """
+    Read every thermal zone under /sys/class/thermal.
 
+    Returns:
+        One (label, temp_c) tuple per thermal_zone* directory, sorted by
+        zone path. temp_c is None where the zone's temp file was missing
+        or unparseable.
+    """
+    zones: list[tuple[str, float | None]] = []
     for zone_path in sorted(Path("/sys/class/thermal").glob("thermal_zone*/temp")):
         if not zone_path.is_file():
             continue
@@ -267,9 +274,60 @@ def render_temperatures() -> list[str]:
         temp_raw = read_sysfs(zone_path)
 
         if temp_raw is not None and temp_raw.lstrip("-").isdigit():
-            temp_c = int(temp_raw) / 1000
+            zones.append((label, int(temp_raw) / 1000))
+        else:
+            zones.append((label, None))
+
+    return zones
+
+def _fmt_temp(temp_c: float) -> str:
+    """
+    Format a Celsius temperature, dropping an insignificant trailing .0.
+
+    Args:
+        temp_c: Temperature in Celsius.
+
+    Returns:
+        temp_c to one decimal place, e.g. "34.1", but "34" (not "34.0")
+        when the value is a whole number.
+    """
+    text = f"{temp_c:.1f}"
+    return text[:-2] if text.endswith(".0") else text
+
+def render_temperatures(simple: bool = False) -> list[str]:
+    """
+    Return lines showing thermal zone temperatures with color coding.
+
+    Args:
+        simple: If True, collapse all zones into a single averaged line
+            (with min/max noted alongside) instead of listing every zone.
+
+    Returns:
+        Formatted lines for the Temperatures section.
+    """
+    lines = _section_header("Temperatures")
+    zones = _read_thermal_zones()
+
+    if simple:
+        temps = [temp_c for _, temp_c in zones if temp_c is not None]
+        if temps:
+            avg_c = sum(temps) / len(temps)
+            min_c = min(temps)
+            max_c = max(temps)
+            lines.append(
+                f"  Avg Temp:  "
+                f"{_temp_color(avg_c)}{_fmt_temp(avg_c)}°C{Style.RESET}"
+                f"  ({_temp_color(min_c)}{_fmt_temp(min_c)}{Style.RESET}"
+                f"-{_temp_color(max_c)}{_fmt_temp(max_c)}{Style.RESET}°C)"
+            )
+        else:
+            lines.append("  Avg Temp:  N/A")
+        return lines
+
+    for label, temp_c in zones:
+        if temp_c is not None:
             color = _temp_color(temp_c)
-            lines.append(f"  {label + ':':<22} {color}{temp_c:>5.1f}°C{Style.RESET}")
+            lines.append(f"  {label + ':':<22} {color}{_fmt_temp(temp_c):>5}°C{Style.RESET}")
         else:
             lines.append(f"  {label + ':':<22} {'N/A':>5}")
 
@@ -948,9 +1006,10 @@ def load_config(config_path: Path | None) -> dict[str, Any]:
 # ─── Layout Engine ───────────────────────────────────────────
 
 # Map of section identifier → render function. Most take no arguments;
-# "network" and the two adsb_stats sections need runtime state instead
-# (wifi/upload/interval, db_path respectively), so they're special-cased
-# in render_sections() rather than changing every entry's signature.
+# "network", the two adsb_stats sections, and "temperatures" need runtime
+# state instead (wifi/upload/interval, db_path, temp_simple respectively),
+# so they're special-cased in render_sections() rather than changing every
+# entry's signature.
 SECTION_RENDERERS: dict[str, Callable[..., list[str]]] = {
     "uptime": render_uptime,
     "cpu_usage": render_cpu_usage,
@@ -1016,6 +1075,7 @@ def render_sections(
     upload: UploadTracker,
     interval: int,
     db_path: Path,
+    temp_simple: bool,
 ) -> list[list[str]]:
     """
     Render a list of named sections into a list of line-lists.
@@ -1027,6 +1087,7 @@ def render_sections(
         upload: Passed through to the "network" section.
         interval: Passed through to the "network" section.
         db_path: Passed through to the "adsb_global"/"adsb_health" sections.
+        temp_simple: Passed through to the "temperatures" section.
     """
     rendered: list[list[str]] = []
     for name in section_names:
@@ -1037,6 +1098,8 @@ def render_sections(
             rendered.append(renderer(wifi, upload, interval))
         elif name in ("adsb_global", "adsb_health"):
             rendered.append(renderer(db_path))
+        elif name == "temperatures":
+            rendered.append(renderer(temp_simple))
         else:
             rendered.append(renderer())
     return rendered
@@ -1063,9 +1126,12 @@ def render_layout(
     db_path = Path(config.get("options", {}).get(
         "adsb_stats_db_path", DEFAULT_CONFIG["options"]["adsb_stats_db_path"]
     ))
+    temp_simple = config.get("options", {}).get(
+        "temp_simple", DEFAULT_CONFIG["options"]["temp_simple"]
+    )
 
-    left = render_sections(left_names, wifi, upload, interval, db_path)
-    right = render_sections(right_names, wifi, upload, interval, db_path)
+    left = render_sections(left_names, wifi, upload, interval, db_path, temp_simple)
+    right = render_sections(right_names, wifi, upload, interval, db_path, temp_simple)
 
     if columns == 1:
         return render_single_column(left + right)

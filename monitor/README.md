@@ -126,6 +126,7 @@ If none are found, a default config is auto-created at
 | `layout.right` | string[] | Section names for the right column (ignored when `columns` is `1`) |
 | `options.interval` | int | Refresh interval in seconds (can be overridden with `-i`) |
 | `options.adsb_stats_db_path` | string | Path to adsb-stats' SQLite database, read by the `adsb_global`/`adsb_health` sections. Default `/var/lib/adsb-stats/stats.db` (matches `adsb_stats`' own default). See Troubleshooting below if those sections can't read it. |
+| `options.temp_simple` | bool | If `true`, the `temperatures` section collapses all thermal zones into a single averaged line (with min/max noted alongside) instead of listing every zone. Default `false`. |
 
 ### Example Configs
 
@@ -184,7 +185,7 @@ Unknown section IDs are silently skipped.
 | `uptime` | System uptime duration and boot timestamp (from `/proc/uptime`) |
 | `cpu_usage` | Overall CPU utilisation percentage and load average (from `/proc/stat` and `/proc/loadavg`) |
 | `memory` | RAM and Swap usage with color-coded percentages (from `/proc/meminfo`) |
-| `temperatures` | All thermal zone readings with threshold-based color coding (red > 80°C, yellow > 65°C, green otherwise) |
+| `temperatures` | All thermal zone readings with threshold-based color coding (red > 80°C, yellow > 65°C, green otherwise). Set `options.temp_simple` to `true` for a single averaged line instead |
 | `cpu_freq` | Per-core clock speeds with big.LITTLE cluster labels (A7 LITTLE cores 0–3, A15 big cores 4–7) |
 | `fan` | Fan PWM duty cycle and control mode (from `/sys/class/hwmon/hwmon0/`) |
 | `services` | Status of all five feeder services via `systemctl is-active`, including crash/retry detection via `NRestarts` and age since last restart |
