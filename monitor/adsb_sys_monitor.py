@@ -55,6 +55,7 @@ class Style:
     CYAN = "\033[36m"
     RED = "\033[31m"
     YELLOW = "\033[33m"
+    GREY = "\033[90m"
 
     @staticmethod
     def colored(text: str, color: str) -> str:
@@ -111,7 +112,9 @@ DEFAULT_CONFIG = {
     "options": {
         "interval": 2,
         "adsb_stats_db_path": "/var/lib/adsb-stats/stats.db",
-        "temp_simple": False
+        "temp_simple": False,
+        "retry_lookback_days": 7,
+        "retry_color_thresholds_days": None
     }
 }
 
@@ -216,6 +219,37 @@ class UploadTracker:
 
         self.prev_tx = curr_tx
         return rate_str, f"{total_mb:.1f} MB"
+
+@dataclass
+class MessageRateTracker:
+    """Tracks dump1090-fa's cumulative message counter to compute a rate."""
+
+    prev_count: int | None = None
+
+    def sample(self, curr_count: int, interval: int) -> str:
+        """
+        Compute a messages/sec rate from dump1090-fa's cumulative counter.
+
+        Args:
+            curr_count: Current value of aircraft.json's "messages" field.
+            interval: Seconds elapsed since the previous sample, used to
+                convert the count delta into a rate.
+
+        Returns:
+            Rate formatted as "N.N msg/s", "collecting..." on the first
+            sample, or "0.0 msg/s" if the counter decreased (dump1090-fa
+            restarted, so the previous count is no longer meaningful).
+        """
+        if self.prev_count is not None and curr_count >= self.prev_count:
+            delta = curr_count - self.prev_count
+            rate_str = f"{delta / interval:.1f} msg/s"
+        elif self.prev_count is None:
+            rate_str = "collecting..."
+        else:
+            rate_str = "0.0 msg/s"
+
+        self.prev_count = curr_count
+        return rate_str
 
 # ─── Section Renderers ───────────────────────────────────────
 # Each returns a list[str] of formatted lines (no embedded \n).
@@ -410,8 +444,19 @@ def render_memory() -> list[str]:
 
     return lines
 
-def render_feeder_services() -> list[str]:
-    """Return lines showing systemctl status and restart count for feeder services."""
+def render_feeder_services(
+    retry_lookback_days: float, retry_thresholds_days: tuple[float, float]
+) -> list[str]:
+    """
+    Return lines showing systemctl status and restart count for feeder services.
+
+    Args:
+        retry_lookback_days: A service's last restart is only reported if
+            it happened within this many days; older ones are omitted.
+        retry_thresholds_days: (red_cutoff, yellow_cutoff) in days,
+            forwarded to _retry_color to color a reported retry by how
+            recently it happened.
+    """
     lines = _section_header("Feeder Services")
 
     for svc in FEEDER_SERVICES:
@@ -419,24 +464,21 @@ def render_feeder_services() -> list[str]:
         color = _service_color(status)
         lines.append(f"  {svc + ':':<19} {color}● {status}{Style.RESET}")
 
-        # Check NRestarts counter from systemd
         restart_count = _get_restart_count(svc)
-        if restart_count is not None and restart_count > 0:
-            last_restart_age = _get_service_restart_age(svc)
-            warn_color = Style.RED if restart_count >= 5 else Style.YELLOW
+        if restart_count is None or restart_count == 0:
+            continue
 
-            if last_restart_age:
-                age_str = _format_age(last_restart_age)
-                if last_restart_age.total_seconds() > 86400:
-                    # Dim old failures (>24hrs)
-                    warn_color = Style.CYAN
-                lines.append(
-                    f"    {warn_color}Retries: {restart_count} ({age_str}){Style.RESET}"
-                )
-            else:
-                lines.append(
-                    f"    {warn_color}Retries: {restart_count}{Style.RESET}"
-                )
+        last_restart_age = _get_service_restart_age(svc)
+        if last_restart_age is None:
+            lines.append(f"    {Style.YELLOW}Retries: {restart_count}{Style.RESET}")
+            continue
+
+        retry_color = _retry_color(last_restart_age, retry_lookback_days, retry_thresholds_days)
+        if retry_color is None:
+            continue
+
+        age_str = _format_age(last_restart_age)
+        lines.append(f"    {retry_color}Retries: {restart_count} ({age_str}){Style.RESET}")
 
     return lines
 
@@ -519,8 +561,17 @@ def render_fan_speed() -> list[str]:
 
     return lines
 
-def render_adsb_live() -> list[str]:
-    """Return lines showing a live snapshot of tracked aircraft from dump1090-fa's aircraft.json."""
+def render_adsb_live(msg_rate: MessageRateTracker, interval: int) -> list[str]:
+    """
+    Return lines showing a live snapshot of tracked aircraft from
+    dump1090-fa's aircraft.json.
+
+    Args:
+        msg_rate: Tracks dump1090-fa's cumulative message counter across
+            refresh cycles to compute a messages/sec rate.
+        interval: Current refresh interval in seconds, used to compute the
+            message rate.
+    """
     lines = _section_header("Live Aircraft")
 
     aircraft_path = Path("/run/dump1090-fa/aircraft.json")
@@ -539,12 +590,16 @@ def render_adsb_live() -> list[str]:
 
     total_tracked = len(aircraft_list)
     with_position = sum(1 for a in aircraft_list if "lat" in a)
-    with_callsign = sum(1 for a in aircraft_list if a.get("flight", "").strip())
 
     plane_color = Style.GREEN if total_tracked > 0 else Style.YELLOW
     lines.append(f"  {'Aircraft tracked:':<18}{plane_color}{total_tracked}{Style.RESET}")
     lines.append(f"  {'With position:':<18}{with_position}")
-    lines.append(f"  {'With callsign:':<18}{with_callsign}")
+
+    # No coloring - a rate near 0 is normal when no aircraft are in range,
+    # same reasoning as the network section's upload rate.
+    msg_count = data.get("messages")
+    rate_str = msg_rate.sample(msg_count, interval) if msg_count is not None else "N/A"
+    lines.append(f"  {'Msg rate:':<18}{rate_str}")
 
     return lines
 
@@ -612,12 +667,9 @@ def render_adsb_health(db_path: Path) -> list[str]:
         lines.append(f"  {'Last data:':<17}never")
     else:
         secs = age.total_seconds()
-        if secs < 600:
-            age_color = Style.GREEN
-        elif secs < 1800:
-            age_color = Style.YELLOW
-        else:
-            age_color = Style.RED
+        # Capped at yellow, never red - a data gap alone isn't an error
+        # (e.g. no aircraft in range overnight), just worth a light flag.
+        age_color = Style.GREEN if secs < 600 else Style.YELLOW
         lines.append(f"  {'Last data:':<17}{age_color}{_format_age(age)}{Style.RESET}")
 
     error_count = stats["error_count"] or 0
@@ -730,6 +782,35 @@ def _service_color(status: str) -> str:
     elif status in ("inactive", "failed"):
         return Style.RED
     return Style.YELLOW
+
+def _retry_color(
+    restart_age: timedelta, lookback_days: float, thresholds_days: tuple[float, float]
+) -> str | None:
+    """
+    Return a recency-based color for a service retry, or None to hide it.
+
+    Args:
+        restart_age: Time elapsed since the service's last restart.
+        lookback_days: How far back retries are reported at all; a restart
+            at least this old returns None.
+        thresholds_days: (red_cutoff, yellow_cutoff) in days from now - an
+            age below red_cutoff is RED, below yellow_cutoff is YELLOW,
+            and below lookback_days is GREY. Both must be <= lookback_days.
+
+    Returns:
+        An ANSI color constant, or None if restart_age falls outside the
+        lookback window.
+    """
+    age_days = restart_age.total_seconds() / 86400
+    if age_days >= lookback_days:
+        return None
+
+    red_cutoff, yellow_cutoff = thresholds_days
+    if age_days < red_cutoff:
+        return Style.RED
+    if age_days < yellow_cutoff:
+        return Style.YELLOW
+    return Style.GREY
 
 def _signal_color(dbm: int) -> str:
     """Return a threshold-based ANSI color for a WiFi signal in dBm."""
@@ -1006,10 +1087,11 @@ def load_config(config_path: Path | None) -> dict[str, Any]:
 # ─── Layout Engine ───────────────────────────────────────────
 
 # Map of section identifier → render function. Most take no arguments;
-# "network", the two adsb_stats sections, and "temperatures" need runtime
-# state instead (wifi/upload/interval, db_path, temp_simple respectively),
-# so they're special-cased in render_sections() rather than changing every
-# entry's signature.
+# "network", "adsb_live", "feeder_services", the two adsb_stats sections,
+# and "temperatures" need runtime state instead (wifi/upload/interval,
+# msg_rate/interval, retry_lookback_days/retry_thresholds_days, db_path,
+# temp_simple respectively), so they're special-cased in render_sections()
+# rather than changing every entry's signature.
 SECTION_RENDERERS: dict[str, Callable[..., list[str]]] = {
     "uptime": render_uptime,
     "cpu_usage": render_cpu_usage,
@@ -1073,9 +1155,12 @@ def render_sections(
     section_names: list[str],
     wifi: WifiState,
     upload: UploadTracker,
+    msg_rate: MessageRateTracker,
     interval: int,
     db_path: Path,
     temp_simple: bool,
+    retry_lookback_days: float,
+    retry_thresholds_days: tuple[float, float],
 ) -> list[list[str]]:
     """
     Render a list of named sections into a list of line-lists.
@@ -1085,9 +1170,12 @@ def render_sections(
             silently skipped.
         wifi: Passed through to the "network" section.
         upload: Passed through to the "network" section.
-        interval: Passed through to the "network" section.
+        msg_rate: Passed through to the "adsb_live" section.
+        interval: Passed through to the "network" and "adsb_live" sections.
         db_path: Passed through to the "adsb_global"/"adsb_health" sections.
         temp_simple: Passed through to the "temperatures" section.
+        retry_lookback_days: Passed through to the "feeder_services" section.
+        retry_thresholds_days: Passed through to the "feeder_services" section.
     """
     rendered: list[list[str]] = []
     for name in section_names:
@@ -1096,10 +1184,14 @@ def render_sections(
             continue
         if name == "network":
             rendered.append(renderer(wifi, upload, interval))
+        elif name == "adsb_live":
+            rendered.append(renderer(msg_rate, interval))
         elif name in ("adsb_global", "adsb_health"):
             rendered.append(renderer(db_path))
         elif name == "temperatures":
             rendered.append(renderer(temp_simple))
+        elif name == "feeder_services":
+            rendered.append(renderer(retry_lookback_days, retry_thresholds_days))
         else:
             rendered.append(renderer())
     return rendered
@@ -1108,6 +1200,7 @@ def render_layout(
     config: dict[str, Any],
     wifi: WifiState,
     upload: UploadTracker,
+    msg_rate: MessageRateTracker,
     interval: int,
 ) -> str:
     """
@@ -1117,6 +1210,7 @@ def render_layout(
         config: Loaded config (see DEFAULT_CONFIG for shape).
         wifi: Connection state tracked across loop iterations.
         upload: TX byte counter tracked across loop iterations.
+        msg_rate: dump1090-fa message counter tracked across loop iterations.
         interval: Current refresh interval in seconds.
     """
     layout = config.get("layout", DEFAULT_CONFIG["layout"])
@@ -1129,9 +1223,26 @@ def render_layout(
     temp_simple = config.get("options", {}).get(
         "temp_simple", DEFAULT_CONFIG["options"]["temp_simple"]
     )
+    retry_lookback_days = config.get("options", {}).get(
+        "retry_lookback_days", DEFAULT_CONFIG["options"]["retry_lookback_days"]
+    )
+    retry_thresholds_days = config.get("options", {}).get(
+        "retry_color_thresholds_days",
+        DEFAULT_CONFIG["options"]["retry_color_thresholds_days"],
+    )
+    if retry_thresholds_days is None:
+        retry_thresholds_days = (retry_lookback_days / 3, retry_lookback_days * 2 / 3)
+    else:
+        retry_thresholds_days = tuple(retry_thresholds_days)
 
-    left = render_sections(left_names, wifi, upload, interval, db_path, temp_simple)
-    right = render_sections(right_names, wifi, upload, interval, db_path, temp_simple)
+    left = render_sections(
+        left_names, wifi, upload, msg_rate, interval, db_path, temp_simple,
+        retry_lookback_days, retry_thresholds_days,
+    )
+    right = render_sections(
+        right_names, wifi, upload, msg_rate, interval, db_path, temp_simple,
+        retry_lookback_days, retry_thresholds_days,
+    )
 
     if columns == 1:
         return render_single_column(left + right)
@@ -1205,12 +1316,13 @@ def main() -> None:
 
     wifi = WifiState()
     upload = UploadTracker()
+    msg_rate = MessageRateTracker()
 
     try:
         while True:
             clear_screen()
             try:
-                print(render_layout(config, wifi, upload, interval))
+                print(render_layout(config, wifi, upload, msg_rate, interval))
             except Exception as e:
                 # One bad section (existing or future) shouldn't take down
                 # the whole dashboard - report and retry next tick.

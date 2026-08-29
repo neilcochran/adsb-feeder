@@ -127,6 +127,8 @@ If none are found, a default config is auto-created at
 | `options.interval` | int | Refresh interval in seconds (can be overridden with `-i`) |
 | `options.adsb_stats_db_path` | string | Path to adsb-stats' SQLite database, read by the `adsb_global`/`adsb_health` sections. Default `/var/lib/adsb-stats/stats.db` (matches `adsb_stats`' own default). See Troubleshooting below if those sections can't read it. |
 | `options.temp_simple` | bool | If `true`, the `temperatures` section collapses all thermal zones into a single averaged line (with min/max noted alongside) instead of listing every zone. Default `false`. |
+| `options.retry_lookback_days` | number | How many days back the `feeder_services` section reports a service's last restart. Restarts older than this aren't shown at all. Default `7`. |
+| `options.retry_color_thresholds_days` | `[number, number]` | Optional `[red_cutoff, yellow_cutoff]` in days, both `<= retry_lookback_days`. A restart younger than `red_cutoff` is red, younger than `yellow_cutoff` is yellow, and anything older (up to `retry_lookback_days`) is grey. Default `null`, which splits `retry_lookback_days` into three even bands. |
 
 ### Example Configs
 
@@ -191,7 +193,7 @@ Unknown section IDs are silently skipped.
 | `cpu_freq` | Per-core clock speeds with big.LITTLE cluster labels (A7 LITTLE cores 0–3, A15 big cores 4–7) |
 | `fan` | Fan PWM duty cycle and control mode (from `/sys/class/hwmon/hwmon0/`) |
 | `feeder_services` | Status of all five feeder services via `systemctl is-active`, including crash/retry detection via `NRestarts` and age since last restart. Does not include the `adsb-stats` collector service - see `adsb_health` |
-| `adsb_live` | Live snapshot of tracked aircraft, position count, and callsign count (parsed from `dump1090-fa`'s `/run/dump1090-fa/aircraft.json`) |
+| `adsb_live` | Live snapshot of tracked aircraft, position count, and messages/sec (parsed from `dump1090-fa`'s `/run/dump1090-fa/aircraft.json`) |
 | `adsb_global` | All-time totals from the `adsb-stats` collector's database: message count, unique aircraft/flights, max altitude/distance (with age) |
 | `adsb_health` | `adsb-stats` service status via `systemctl is-active`, data freshness (age of the last processed message), and error count with the most recent error's age and message |
 | `network` | WiFi connection state, SSID, signal strength in dBm, connection/disconnection timestamps, and upload throughput (computed from `/sys/class/net/wlan0/statistics/tx_bytes`) |
@@ -206,10 +208,14 @@ The `feeder_services` section tracks these five systemd units:
 4. `adsbexchange-feed`
 5. `adsbexchange-mlat`
 
-Retry indicators appear when `NRestarts > 0`, color-coded:
-- **Yellow**: 1–4 retries
-- **Red**: 5+ retries
-- **Cyan**: retries occurred > 24 hours ago (dimmed/historical)
+A retry indicator appears when `NRestarts > 0` and the service's last
+restart falls within `options.retry_lookback_days` (default 7 days) - older
+restarts aren't shown at all. Color is based purely on how recently the
+restart happened, split into three even bands by default (or set
+`options.retry_color_thresholds_days` for custom cutoffs):
+- **Red**: most recent third of the lookback window
+- **Yellow**: middle third
+- **Grey**: oldest third (still within the lookback window)
 
 ## Troubleshooting
 
