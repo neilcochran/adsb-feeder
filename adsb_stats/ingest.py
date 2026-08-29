@@ -21,10 +21,10 @@ logger = logging.getLogger(__name__)
 
 # Radio-horizon line-of-sight range tops out well under this even for a
 # receiver/aircraft both at generous altitude, and exceptional atmospheric
-# ducting DX reception rarely exceeds ~600km - this ceiling is deliberately
+# ducting DX reception rarely exceeds ~325nm - this ceiling is deliberately
 # generous so it only rejects clearly-corrupted position data (e.g. a bad
 # CPR decode on dump1090-fa's side), never a genuine reading.
-MAX_PLAUSIBLE_DISTANCE_KM = 1000
+MAX_PLAUSIBLE_DISTANCE_NM = 540
 
 
 class IngestLoop:
@@ -188,18 +188,18 @@ class IngestLoop:
             self.alt_max_flush_icao = icao_hex
             self.alt_max_flush_ts = now_str
 
-    def _apply_distance(self, distance_km: float, icao_hex: str, now_str: str) -> None:
+    def _apply_distance(self, distance_nm: float, icao_hex: str, now_str: str) -> None:
         """Fold a new distance reading into the hour/day/flush maxima."""
-        if self.dist_max_hour is None or distance_km > self.dist_max_hour:
-            self.dist_max_hour = distance_km
+        if self.dist_max_hour is None or distance_nm > self.dist_max_hour:
+            self.dist_max_hour = distance_nm
 
-        if self.dist_max_day is None or distance_km > self.dist_max_day:
-            self.dist_max_day = distance_km
+        if self.dist_max_day is None or distance_nm > self.dist_max_day:
+            self.dist_max_day = distance_nm
             self.dist_max_day_icao = icao_hex
             self.dist_max_day_ts = now_str
 
-        if self.dist_max_flush is None or distance_km > self.dist_max_flush:
-            self.dist_max_flush = distance_km
+        if self.dist_max_flush is None or distance_nm > self.dist_max_flush:
+            self.dist_max_flush = distance_nm
             self.dist_max_flush_icao = icao_hex
             self.dist_max_flush_ts = now_str
 
@@ -241,7 +241,7 @@ class IngestLoop:
                 distance = haversine_distance(
                     self.receiver_lat, self.receiver_lon, msg.lat, msg.lon
                 )
-                if distance <= MAX_PLAUSIBLE_DISTANCE_KM:
+                if distance <= MAX_PLAUSIBLE_DISTANCE_NM:
                     self._apply_distance(distance, msg.icao_hex, now_str)
 
         except Exception as e:

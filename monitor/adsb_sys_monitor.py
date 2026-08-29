@@ -630,10 +630,10 @@ def render_adsb_global(db_path: Path) -> list[str]:
         detail = f" ({_format_age(age)})" if age is not None else ""
         lines.append(f"  {'Max altitude:':<17}{stats['alt_max']:,.0f} ft{detail}")
 
-    if stats["dist_max_km"] is not None:
+    if stats["dist_max_nm"] is not None:
         age = _age_since(stats["dist_max_ts"])
         detail = f" ({_format_age(age)})" if age is not None else ""
-        lines.append(f"  {'Max distance:':<17}{stats['dist_max_km']:.1f} km{detail}")
+        lines.append(f"  {'Max distance:':<17}{stats['dist_max_nm']:.1f} nm{detail}")
 
     return lines
 
@@ -984,7 +984,7 @@ def _read_adsb_stats_row(db_path: Path) -> dict[str, Any] | None:
     columns = [
         "msg_total", "uaircraft_total", "uflights_total",
         "alt_max", "alt_max_icao", "alt_max_ts",
-        "dist_max_km", "dist_max_icao", "dist_max_ts",
+        "dist_max_nm", "dist_max_icao", "dist_max_ts",
         "last_msg_ts", "error_count", "last_error_ts", "last_error_msg",
     ]
     try:

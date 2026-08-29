@@ -106,9 +106,9 @@ def cmd_status(args: argparse.Namespace) -> None:
         if stats["alt_max_ts"]:
             print(f"  Time: {stats['alt_max_ts']}")
 
-    if stats["dist_max_km"] is not None:
+    if stats["dist_max_nm"] is not None:
         print("\nMaximum Distance:")
-        print(f"  Value: {stats['dist_max_km']:.2f} km")
+        print(f"  Value: {stats['dist_max_nm']:.2f} nm")
         if stats["dist_max_icao"]:
             print(f"  Aircraft: {stats['dist_max_icao'].upper()}")
         if stats["dist_max_ts"]:

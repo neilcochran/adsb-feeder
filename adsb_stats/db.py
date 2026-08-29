@@ -60,10 +60,10 @@ def get_connection(db_path: str) -> sqlite3.Connection:
 
 
 def upsert_hourly(conn: sqlite3.Connection, ts: str, msg_count: int, uaircraft: int,
-                  alt_max: Optional[float], dist_max_km: Optional[float]) -> None:
+                  alt_max: Optional[float], dist_max_nm: Optional[float]) -> None:
     """
     Upsert an hourly_stats row, accumulating msg_count and taking the max of
-    the running totals (uaircraft/alt_max/dist_max_km are expected to be
+    the running totals (uaircraft/alt_max/dist_max_nm are expected to be
     cumulative-since-hour-start values, not deltas - see ingest.py).
 
     Args:
@@ -72,23 +72,23 @@ def upsert_hourly(conn: sqlite3.Connection, ts: str, msg_count: int, uaircraft: 
         msg_count: Delta message count since the last write for this hour.
         uaircraft: Cumulative unique-aircraft count so far this hour.
         alt_max: Cumulative max altitude (ft) so far this hour, or None.
-        dist_max_km: Cumulative max distance (km) so far this hour, or None.
+        dist_max_nm: Cumulative max distance (nm) so far this hour, or None.
     """
     with conn:
         conn.execute("""
-            INSERT INTO hourly_stats (ts, msg_count, uaircraft, alt_max, dist_max_km)
+            INSERT INTO hourly_stats (ts, msg_count, uaircraft, alt_max, dist_max_nm)
             VALUES (?, ?, ?, ?, ?)
             ON CONFLICT(ts) DO UPDATE SET
                 msg_count = msg_count + excluded.msg_count,
                 uaircraft = MAX(uaircraft, excluded.uaircraft),
                 alt_max = MAX(alt_max, excluded.alt_max),
-                dist_max_km = MAX(dist_max_km, excluded.dist_max_km)
-        """, (ts, msg_count, uaircraft, alt_max, dist_max_km))
+                dist_max_nm = MAX(dist_max_nm, excluded.dist_max_nm)
+        """, (ts, msg_count, uaircraft, alt_max, dist_max_nm))
 
 
 def upsert_daily(conn: sqlite3.Connection, date: str, msg_count: int, uaircraft: int,
                  uflights: int, alt_max: Optional[float], alt_max_icao: Optional[str],
-                 alt_max_ts: Optional[str], dist_max_km: Optional[float],
+                 alt_max_ts: Optional[str], dist_max_nm: Optional[float],
                  dist_max_icao: Optional[str], dist_max_ts: Optional[str]) -> None:
     """
     Upsert a daily_stats row, accumulating msg_count and tracking maxima.
@@ -102,15 +102,15 @@ def upsert_daily(conn: sqlite3.Connection, date: str, msg_count: int, uaircraft:
         alt_max: Cumulative max altitude (ft) so far today, or None.
         alt_max_icao: ICAO hex of the aircraft holding alt_max, or None.
         alt_max_ts: Timestamp alt_max was recorded, or None.
-        dist_max_km: Cumulative max distance (km) so far today, or None.
-        dist_max_icao: ICAO hex of the aircraft holding dist_max_km, or None.
-        dist_max_ts: Timestamp dist_max_km was recorded, or None.
+        dist_max_nm: Cumulative max distance (nm) so far today, or None.
+        dist_max_icao: ICAO hex of the aircraft holding dist_max_nm, or None.
+        dist_max_ts: Timestamp dist_max_nm was recorded, or None.
     """
     with conn:
         conn.execute("""
             INSERT INTO daily_stats (date, msg_count, uaircraft, uflights,
                                     alt_max, alt_max_icao, alt_max_ts,
-                                    dist_max_km, dist_max_icao, dist_max_ts)
+                                    dist_max_nm, dist_max_icao, dist_max_ts)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(date) DO UPDATE SET
                 msg_count = msg_count + excluded.msg_count,
@@ -119,17 +119,17 @@ def upsert_daily(conn: sqlite3.Connection, date: str, msg_count: int, uaircraft:
                 alt_max = CASE WHEN excluded.alt_max > alt_max OR alt_max IS NULL THEN excluded.alt_max ELSE alt_max END,
                 alt_max_icao = CASE WHEN excluded.alt_max > alt_max OR alt_max IS NULL THEN excluded.alt_max_icao ELSE alt_max_icao END,
                 alt_max_ts = CASE WHEN excluded.alt_max > alt_max OR alt_max IS NULL THEN excluded.alt_max_ts ELSE alt_max_ts END,
-                dist_max_km = CASE WHEN excluded.dist_max_km > dist_max_km OR dist_max_km IS NULL THEN excluded.dist_max_km ELSE dist_max_km END,
-                dist_max_icao = CASE WHEN excluded.dist_max_km > dist_max_km OR dist_max_km IS NULL THEN excluded.dist_max_icao ELSE dist_max_icao END,
-                dist_max_ts = CASE WHEN excluded.dist_max_km > dist_max_km OR dist_max_km IS NULL THEN excluded.dist_max_ts ELSE dist_max_ts END
+                dist_max_nm = CASE WHEN excluded.dist_max_nm > dist_max_nm OR dist_max_nm IS NULL THEN excluded.dist_max_nm ELSE dist_max_nm END,
+                dist_max_icao = CASE WHEN excluded.dist_max_nm > dist_max_nm OR dist_max_nm IS NULL THEN excluded.dist_max_icao ELSE dist_max_icao END,
+                dist_max_ts = CASE WHEN excluded.dist_max_nm > dist_max_nm OR dist_max_nm IS NULL THEN excluded.dist_max_ts ELSE dist_max_ts END
         """, (date, msg_count, uaircraft, uflights, alt_max, alt_max_icao, alt_max_ts,
-              dist_max_km, dist_max_icao, dist_max_ts))
+              dist_max_nm, dist_max_icao, dist_max_ts))
 
 
 def update_global_incremental(conn: sqlite3.Connection, msg_delta: int, uaircraft_delta: int,
                               uflights_delta: int, alt_max: Optional[float],
                               alt_max_icao: Optional[str], alt_max_ts: Optional[str],
-                              dist_max_km: Optional[float], dist_max_icao: Optional[str],
+                              dist_max_nm: Optional[float], dist_max_icao: Optional[str],
                               dist_max_ts: Optional[str], first_msg_ts: Optional[str],
                               last_msg_ts: str, last_dump1090_msg_count: Optional[int]) -> None:
     """
@@ -143,9 +143,9 @@ def update_global_incremental(conn: sqlite3.Connection, msg_delta: int, uaircraf
         alt_max: Best altitude (ft) seen since the last write, or None.
         alt_max_icao: ICAO hex of the aircraft holding alt_max, or None.
         alt_max_ts: Timestamp alt_max was recorded, or None.
-        dist_max_km: Best distance (km) seen since the last write, or None.
-        dist_max_icao: ICAO hex of the aircraft holding dist_max_km, or None.
-        dist_max_ts: Timestamp dist_max_km was recorded, or None.
+        dist_max_nm: Best distance (nm) seen since the last write, or None.
+        dist_max_icao: ICAO hex of the aircraft holding dist_max_nm, or None.
+        dist_max_ts: Timestamp dist_max_nm was recorded, or None.
         first_msg_ts: Candidate first-message timestamp; only takes effect
             if first_msg_ts is still unset (COALESCE), since it's meant to
             be immutable once recorded.
@@ -163,16 +163,16 @@ def update_global_incremental(conn: sqlite3.Connection, msg_delta: int, uaircraf
                 alt_max = CASE WHEN ? > alt_max OR alt_max IS NULL THEN ? ELSE alt_max END,
                 alt_max_icao = CASE WHEN ? > alt_max OR alt_max IS NULL THEN ? ELSE alt_max_icao END,
                 alt_max_ts = CASE WHEN ? > alt_max OR alt_max IS NULL THEN ? ELSE alt_max_ts END,
-                dist_max_km = CASE WHEN ? > dist_max_km OR dist_max_km IS NULL THEN ? ELSE dist_max_km END,
-                dist_max_icao = CASE WHEN ? > dist_max_km OR dist_max_km IS NULL THEN ? ELSE dist_max_icao END,
-                dist_max_ts = CASE WHEN ? > dist_max_km OR dist_max_km IS NULL THEN ? ELSE dist_max_ts END,
+                dist_max_nm = CASE WHEN ? > dist_max_nm OR dist_max_nm IS NULL THEN ? ELSE dist_max_nm END,
+                dist_max_icao = CASE WHEN ? > dist_max_nm OR dist_max_nm IS NULL THEN ? ELSE dist_max_icao END,
+                dist_max_ts = CASE WHEN ? > dist_max_nm OR dist_max_nm IS NULL THEN ? ELSE dist_max_ts END,
                 first_msg_ts = COALESCE(first_msg_ts, ?),
                 last_msg_ts = ?,
                 last_dump1090_msg_count = ?
             WHERE id = 1
         """, (msg_delta, uaircraft_delta, uflights_delta,
               alt_max, alt_max, alt_max, alt_max_icao, alt_max, alt_max_ts,
-              dist_max_km, dist_max_km, dist_max_km, dist_max_icao, dist_max_km, dist_max_ts,
+              dist_max_nm, dist_max_nm, dist_max_nm, dist_max_icao, dist_max_nm, dist_max_ts,
               first_msg_ts, last_msg_ts, last_dump1090_msg_count))
 
 
@@ -279,6 +279,11 @@ def get_global_stats(conn: sqlite3.Connection) -> Optional[dict]:
     """
     Fetch the single global_stats row.
 
+    Builds the dict from cursor.description rather than positional indices,
+    since ALTER TABLE ADD COLUMN/DROP COLUMN (see _migrate_schema) can leave
+    an upgraded database's on-disk column order different from a fresh
+    schema.sql CREATE TABLE's declared order.
+
     Returns:
         dict of column name -> value, or None if the row is somehow missing
         (shouldn't happen once init_db has run).
@@ -288,22 +293,8 @@ def get_global_stats(conn: sqlite3.Connection) -> Optional[dict]:
     row = cursor.fetchone()
     if row is None:
         return None
-    return {
-        "msg_total": row[1],
-        "uaircraft_total": row[2],
-        "uflights_total": row[3],
-        "alt_max": row[4],
-        "alt_max_icao": row[5],
-        "alt_max_ts": row[6],
-        "dist_max_km": row[7],
-        "dist_max_icao": row[8],
-        "dist_max_ts": row[9],
-        "first_msg_ts": row[10],
-        "last_msg_ts": row[11],
-        "error_count": row[13],
-        "last_error_ts": row[14],
-        "last_error_msg": row[15],
-    }
+    columns = [description[0] for description in cursor.description]
+    return dict(zip(columns, row))
 
 
 def get_table_rows(conn: sqlite3.Connection, table_name: str) -> tuple[list[str], list[tuple]]:

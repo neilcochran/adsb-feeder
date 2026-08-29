@@ -35,7 +35,7 @@ python3 -m adsb_stats.cli init --lat <YOUR_LAT> --lon <YOUR_LON>
 python3 -m adsb_stats.cli run
 ```
 
-`--lat`/`--lon` are optional. Without them, `dist_max_km` and related
+`--lat`/`--lon` are optional. Without them, `dist_max_nm` and related
 fields stay null; message/aircraft/altitude tracking works regardless.
 Ctrl+C stops it cleanly (a final flush happens on exit).
 
@@ -166,7 +166,7 @@ you edit the "wrong" config file, the service won't see the change.
 | `sbs_port` | int | dump1090-fa's SBS port. Default `30003`. |
 | `aircraft_json_path` | string | Path to dump1090-fa's `aircraft.json`, used to derive `msg_total` (see Data Model below). Default `/run/dump1090-fa/aircraft.json`. |
 | `db_path` | string | SQLite database path. Default `/var/lib/adsb-stats/stats.db`. |
-| `receiver_lat` / `receiver_lon` | float or null | Receiver position for distance tracking. `null` disables `dist_max_km` and related fields entirely - no error, they just stay null. |
+| `receiver_lat` / `receiver_lon` | float or null | Receiver position for distance tracking. `null` disables `dist_max_nm` and related fields entirely - no error, they just stay null. |
 | `flush_interval_seconds` | int | How often in-memory counters are written to the database. Default `300` (5 minutes). |
 | `log_level` | string | Python logging level (`DEBUG`/`INFO`/`WARNING`/`ERROR`). Default `INFO`. |
 
@@ -278,7 +278,7 @@ python3 -m adsb_stats.cli status    # correct
 python3 adsb_stats/cli.py status    # fails
 ```
 
-### `dist_max_km` stays null / distance tracking isn't working
+### `dist_max_nm` stays null / distance tracking isn't working
 
 `receiver_lat`/`receiver_lon` are `null` in the config the running service
 is actually using. Check which config that is (`systemctl cat adsb-stats`,

@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS global_stats (
   alt_max           REAL,
   alt_max_icao      TEXT,
   alt_max_ts        TEXT,
-  dist_max_km       REAL,
+  dist_max_nm       REAL,
   dist_max_icao     TEXT,
   dist_max_ts       TEXT,
   first_msg_ts      TEXT,
@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS daily_stats (
   alt_max       REAL,
   alt_max_icao  TEXT,
   alt_max_ts    TEXT,
-  dist_max_km   REAL,
+  dist_max_nm   REAL,
   dist_max_icao TEXT,
   dist_max_ts   TEXT
 );
@@ -51,7 +51,7 @@ CREATE TABLE IF NOT EXISTS hourly_stats (
   msg_count   INTEGER NOT NULL DEFAULT 0,
   uaircraft   INTEGER NOT NULL DEFAULT 0,
   alt_max     REAL,
-  dist_max_km REAL
+  dist_max_nm REAL
 );
 
 -- Global dedup table: every unique ICAO ever observed by this station.
