@@ -263,8 +263,8 @@ itself keeps running through it.
 ### Granting read access to other tools
 
 `stats.db` is owned by the dedicated `adsbstats` user, so another tool
-running as a different user (e.g. `monitor/adsb_sys_monitor.py`'s
-`adsb_global`/`adsb_health` sections) can't read it by default.
+running as a different user (e.g. `monitor`'s `adsb_global`/`adsb_health`
+sections) can't read it by default.
 `systemd/install.sh` sets the data directory and database file to `750`/
 `640` (owner read/write, group read-only) rather than leaving them at
 whatever the ambient umask produces. To grant a user read access, add them

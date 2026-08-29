@@ -2,7 +2,7 @@
 
 ## Overview
 
-`adsb_sys_monitor.py` is a real-time terminal dashboard for Odroid-XU4 / DietPi
+`monitor` is a real-time terminal dashboard for Odroid-XU4 / DietPi
 ADS-B feeder stations. It reads system metrics from sysfs and `/proc`,
 queries `systemctl` for feeder service status, and parses `dump1090-fa`'s
 live `aircraft.json` to display aircraft tracking statistics — all in a
@@ -26,7 +26,7 @@ present in the repo:
 
 ```bash
 cd ~/adsb-feeder
-ls monitor/adsb_sys_monitor.py
+ls monitor/cli.py
 ```
 
 ### Verify External Tools
@@ -62,7 +62,7 @@ Start the monitor with auto-detected config (checks `~/.config/adsb-monitor/conf
 first, then `./config.json`, then falls back to defaults):
 
 ```bash
-python3 monitor/adsb_sys_monitor.py
+python3 -m monitor.cli
 ```
 
 ### Custom Configuration
@@ -70,7 +70,7 @@ python3 monitor/adsb_sys_monitor.py
 Specify a configuration file to change layout, sections, or refresh interval:
 
 ```bash
-python3 monitor/adsb_sys_monitor.py --config monitor/configs/stationary.json
+python3 -m monitor.cli --config monitor/configs/stationary.json
 ```
 
 ### Refresh Interval Override
@@ -78,7 +78,7 @@ python3 monitor/adsb_sys_monitor.py --config monitor/configs/stationary.json
 Override the configured refresh interval (in seconds) without editing the config:
 
 ```bash
-python3 monitor/adsb_sys_monitor.py -i 1
+python3 -m monitor.cli -i 1
 ```
 
 ### Headless / Remote Usage
@@ -176,7 +176,7 @@ file and pass it with `--config`:
 ```bash
 cp monitor/configs/stationary.json ~/.config/adsb-monitor/config.json
 # Edit as needed, then run:
-python3 monitor/adsb_sys_monitor.py
+python3 -m monitor.cli
 ```
 
 ## Available Sections
@@ -259,7 +259,7 @@ section for more.
 
 The script hardcodes the WiFi interface as `wlan0`. If your interface has a
 different name (check with `ip link`), you'll need to modify the `WIFI_IFACE`
-constant near the top of the script.
+constant in `monitor/config.py`.
 
 ### Fan Section Shows "fan not detected"
 
