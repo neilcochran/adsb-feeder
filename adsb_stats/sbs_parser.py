@@ -44,6 +44,7 @@ FIELD_CALLSIGN = 10
 FIELD_ALTITUDE = 11
 FIELD_LAT = 14
 FIELD_LON = 15
+FIELD_VERTICAL_RATE = 16
 MIN_FIELDS = 22
 
 # Physically-plausible bounds for a genuine barometric altitude reading.
@@ -60,6 +61,15 @@ MIN_FIELDS = 22
 MIN_ALTITUDE_FT = -1500
 MAX_ALTITUDE_FT = 50175
 
+# Generous sanity bounds for vertical rate, well beyond even a fighter
+# jet's sustained rate - this field isn't tracked as a stat itself, it's
+# used by ingest.py to calibrate how much altitude change is plausible
+# for a given aircraft, so a wildly out-of-range value here is rejected
+# for the same reason a wildly out-of-range altitude is: better to fall
+# back to "unknown" than let a corrupted reading skew that calibration.
+MIN_VERTICAL_RATE_FPM = -12000
+MAX_VERTICAL_RATE_FPM = 12000
+
 
 class SBSMessage(NamedTuple):
     """Fields extracted from one SBS "MSG" line."""
@@ -68,6 +78,7 @@ class SBSMessage(NamedTuple):
     altitude_ft: Optional[int] = None
     lat: Optional[float] = None
     lon: Optional[float] = None
+    vertical_rate_fpm: Optional[int] = None
     is_ident: bool = False
     is_position: bool = False
 
@@ -86,7 +97,12 @@ def parse_sbs_line(line: str) -> Optional[SBSMessage]:
     if len(fields) < MIN_FIELDS or fields[0] != "MSG":
         return None
 
-    icao_hex = fields[FIELD_ICAO].strip().lower()
+    # dump1090-fa prefixes a non-ICAO address (TIS-B, ADS-R, ground vehicle,
+    # anonymous address - see readsb's MODES_NON_ICAO_ADDRESS) with "~" in
+    # this field; stripped for the same reason aircraft_json.py's
+    # index_by_hex strips it - both need to key on the same bare hex string
+    # for _confirm_via_aircraft_json's cross-reference to ever find a match.
+    icao_hex = fields[FIELD_ICAO].strip().lstrip("~").lower()
     if not icao_hex:
         return None
 
@@ -111,12 +127,22 @@ def parse_sbs_line(line: str) -> Optional[SBSMessage]:
         except ValueError:
             pass
 
+    vertical_rate_fpm = None
+    if fields[FIELD_VERTICAL_RATE].strip():
+        try:
+            parsed_rate = int(float(fields[FIELD_VERTICAL_RATE]))
+            if MIN_VERTICAL_RATE_FPM <= parsed_rate <= MAX_VERTICAL_RATE_FPM:
+                vertical_rate_fpm = parsed_rate
+        except ValueError:
+            pass
+
     return SBSMessage(
         icao_hex=icao_hex,
         callsign=callsign,
         altitude_ft=altitude_ft,
         lat=lat,
         lon=lon,
+        vertical_rate_fpm=vertical_rate_fpm,
         is_ident=callsign is not None,
         is_position=lat is not None,
     )

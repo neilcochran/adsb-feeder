@@ -6,5 +6,39 @@
 
 set -euo pipefail
 
-cd /opt/adsb-feeder
-exec sudo -u adsbstats python3 -m adsb_stats.cli "$@" --config /etc/adsb-stats/config.json
+TARGET_DIR="/opt/adsb-feeder"
+CONFIG_FILE="/etc/adsb-stats/config.json"
+
+if [ "${1:-}" = "redeploy" ]; then
+    shift
+    # Unlike every other subcommand, `redeploy` controls the systemd unit
+    # itself, which the unprivileged adsbstats user deliberately can't do -
+    # so run this one with `sudo adsb-stats redeploy`, not bare. It uses
+    # the invoking user's own privilege for the systemctl calls; the
+    # database work below still runs as adsbstats like everything else.
+    #
+    # Expects code has already been rsynced (systemd/install.sh) before
+    # this runs. Stopping first, then re-running init (safe to re-run even
+    # if install.sh's own init already ran - see schema.sql), avoids any
+    # chance of a SQLite lock conflict with a still-running ingest loop.
+    cd "$TARGET_DIR"
+    systemctl stop adsb-stats
+    sudo -u adsbstats python3 -m adsb_stats.cli init --config "$CONFIG_FILE"
+
+    if [ "$#" -gt 0 ]; then
+        if sudo -u adsbstats python3 -m adsb_stats.cli exec-sql --config "$CONFIG_FILE" "$@"; then
+            systemctl start adsb-stats
+        else
+            echo "[redeploy] One-shot SQL failed - service NOT restarted." >&2
+            echo "[redeploy] Fix the issue, then run: systemctl start adsb-stats" >&2
+            exit 1
+        fi
+    else
+        systemctl start adsb-stats
+    fi
+
+    exit 0
+fi
+
+cd "$TARGET_DIR"
+exec sudo -u adsbstats python3 -m adsb_stats.cli "$@" --config "$CONFIG_FILE"

@@ -62,6 +62,13 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
             conn.execute("ALTER TABLE hourly_stats ADD COLUMN alt_max_icao TEXT")
             conn.execute("ALTER TABLE hourly_stats ADD COLUMN alt_max_ts TEXT")
 
+    cursor.execute("PRAGMA table_info(seen_aircraft)")
+    seen_aircraft_columns = {row[1] for row in cursor.fetchall()}
+    if "last_altitude_ft" not in seen_aircraft_columns:
+        with conn:
+            conn.execute("ALTER TABLE seen_aircraft ADD COLUMN last_altitude_ft REAL")
+            conn.execute("ALTER TABLE seen_aircraft ADD COLUMN last_altitude_ts TEXT")
+
 
 def get_connection(db_path: str) -> sqlite3.Connection:
     """Open a database connection."""
@@ -261,6 +268,43 @@ def batch_update_aircraft_last_seen(conn: sqlite3.Connection,
         )
 
 
+def get_last_altitudes(conn: sqlite3.Connection) -> dict[str, tuple[float, str]]:
+    """
+    Load every aircraft's persisted last-accepted altitude and when it was
+    recorded, to seed ingest.py's in-memory climb-rate check across a
+    restart it would otherwise have no memory of.
+
+    Args:
+        conn: Open database connection.
+
+    Returns:
+        dict of icao_hex -> (altitude_ft, timestamp), for every aircraft
+        with a recorded value. Empty if none have one yet.
+    """
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT icao, last_altitude_ft, last_altitude_ts FROM seen_aircraft "
+        "WHERE last_altitude_ft IS NOT NULL"
+    )
+    return {icao: (altitude_ft, ts) for icao, altitude_ft, ts in cursor.fetchall()}
+
+
+def batch_update_aircraft_last_altitude(conn: sqlite3.Connection,
+                                        altitudes: list[tuple[str, float, str]]) -> None:
+    """
+    Batch-update last_altitude_ft/last_altitude_ts for multiple aircraft.
+
+    Args:
+        conn: Open database connection.
+        altitudes: (icao_hex, altitude_ft, timestamp) triples to apply.
+    """
+    with conn:
+        conn.executemany(
+            "UPDATE seen_aircraft SET last_altitude_ft = ?, last_altitude_ts = ? WHERE icao = ?",
+            [(altitude_ft, ts, icao_hex) for icao_hex, altitude_ft, ts in altitudes]
+        )
+
+
 def try_insert_flight(conn: sqlite3.Connection, icao_hex: str, callsign: str) -> bool:
     """
     Try to insert a (icao, callsign) flight into seen_today.
@@ -379,6 +423,34 @@ def run_query(conn: sqlite3.Connection, sql: str) -> tuple[list[str], list[tuple
     rows = cursor.fetchall()
     columns = [description[0] for description in cursor.description] if cursor.description else []
     return columns, rows
+
+
+def run_maintenance_sql(conn: sqlite3.Connection, sql: str) -> None:
+    """
+    Execute an arbitrary SQL script for one-off maintenance/cleanup - unlike
+    run_query, not restricted to SELECT/WITH/EXPLAIN, since this exists
+    specifically for the UPDATE/DELETE-style manual data fixes maintenance
+    occasionally needs (see the `exec-sql` CLI command and the `redeploy`
+    wrapper subcommand that calls it). May contain multiple statements.
+
+    executescript() commits any pending transaction before running but
+    provides no further implicit transaction control of its own - the same
+    caveat init_db() already documents - so an explicit commit() follows it
+    here rather than relying on `with conn:`.
+
+    Args:
+        conn: Open database connection.
+        sql: SQL text to execute - trusted, hand-authored maintenance SQL,
+            not read-only-restricted or otherwise sandboxed.
+
+    Raises:
+        sqlite3.Error: If the script fails - propagated rather than caught,
+            so the caller (the redeploy wrapper) can tell the difference
+            between success and failure and act on it (e.g. not restarting
+            the service after a failed one-shot).
+    """
+    conn.executescript(sql)
+    conn.commit()
 
 
 def export_table_to_csv(conn: sqlite3.Connection, table_name: str, filepath: str) -> list[tuple]:

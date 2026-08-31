@@ -68,26 +68,38 @@ sudo systemctl status adsb-stats
 ```
 
 `install.sh` is safe to re-run any time you update the code - it skips
-recreating the user, skips an existing config, skips an existing database,
-and just re-syncs `/opt/adsb-feeder/` and reinstalls the systemd unit.
-After re-running it, migrate the database *before* restarting the service:
+recreating the user and skips an existing config, but always re-syncs
+`/opt/adsb-feeder/`, reinstalls the systemd unit, and always re-runs the
+database migration too, even against an existing database (see
+`db._migrate_schema()` - adding columns a schema change introduced, never
+touching existing rows, so this is safe to repeat). It does not stop or
+restart the service itself, so redeploy after re-running it:
 
 ```bash
-cd /opt/adsb-feeder
-sudo -u adsbstats python3 -m adsb_stats.cli init --config /etc/adsb-stats/config.json
-sudo systemctl restart adsb-stats
+sudo adsb-stats redeploy
 ```
 
-`init` is safe to re-run against an existing database - it only adds
-columns a schema change introduced, never touches existing rows (see
-`db._migrate_schema()`). Migrating before restarting matters whenever an
-update includes a schema change: newly-deployed code can start writing to
-a new column immediately, and restarting first would have it do that
-against a database that doesn't have that column yet, crashing on the
-next write until the migration catches up. Running `init` first (harmless
-even when there's nothing to migrate) means the still-running old process
-keeps working fine on the old schema while the new column gets added
-underneath it, so the new code never finds it missing.
+This stops the service, re-confirms the migration (harmless even though
+`install.sh`'s own migration just ran - `install.sh` doesn't stop the
+service first, so repeating it here avoids any chance of a lock conflict
+with a still-running ingest loop), and restarts. Migrating before
+restarting matters whenever an update includes a schema change:
+newly-deployed code can start writing to a new column immediately, and
+restarting first would have it do that against a database that doesn't
+have that column yet, crashing on the next write until the migration
+catches up.
+
+`redeploy` also accepts `--sql "..."` or `--sql-file PATH` for a one-shot
+maintenance statement to run between the migration and the restart (see
+`exec-sql` below) - useful for a data fix that should land atomically with
+a code/schema change. If that statement fails, the service is deliberately
+*not* restarted; fix the issue and run `systemctl start adsb-stats`
+yourself once it's resolved.
+
+Unlike every other subcommand, `redeploy` needs `sudo` directly (`sudo
+adsb-stats redeploy`, not the usual bare `adsb-stats ...`) since it
+controls the systemd unit - something the restricted `adsbstats` service
+account deliberately can't do itself.
 
 ## Usage
 
@@ -158,6 +170,24 @@ change needed. Only a single `SELECT`/`WITH`/`EXPLAIN` statement is
 allowed; anything else (`INSERT`/`UPDATE`/`DELETE`/etc.) is rejected before
 it reaches the database.
 
+### `exec-sql`
+
+Run a one-shot, non-read-only SQL script - for manual maintenance/cleanup,
+not the ad hoc reporting `query` covers. Unlike `query`, statements aren't
+restricted to `SELECT`/`WITH`/`EXPLAIN`, since this exists specifically for
+scripted `UPDATE`/`DELETE`-style fixes; it exits non-zero on failure so a
+caller can tell success from failure without parsing output:
+
+```bash
+python3 -m adsb_stats.cli exec-sql --sql "UPDATE global_stats SET alt_max = NULL WHERE id = 1"
+python3 -m adsb_stats.cli exec-sql --sql-file cleanup.sql
+```
+
+Most of the time you'll want this via `sudo adsb-stats redeploy --sql-file
+cleanup.sql` instead (see Installation) rather than calling it directly -
+that wraps it with the stop/restart dance and only restarts the service if
+the script succeeded.
+
 ### `--version`
 
 ```bash
@@ -186,7 +216,7 @@ you edit the "wrong" config file, the service won't see the change.
 |---|---|---|
 | `sbs_host` | string | dump1090-fa's SBS host. Default `127.0.0.1`. |
 | `sbs_port` | int | dump1090-fa's SBS port. Default `30003`. |
-| `aircraft_json_path` | string | Path to dump1090-fa's `aircraft.json`, used to derive `msg_total` (see Data Model below). Default `/run/dump1090-fa/aircraft.json`. |
+| `aircraft_json_path` | string | Path to dump1090-fa's `aircraft.json`, used to derive `msg_total` and to validate altitude readings (see Data Model below). Default `/run/dump1090-fa/aircraft.json`. |
 | `db_path` | string | SQLite database path. Default `/var/lib/adsb-stats/stats.db`. |
 | `receiver_lat` / `receiver_lon` | float or null | Receiver position for distance tracking. `null` disables `dist_max_nm` and related fields entirely - no error, they just stay null. |
 | `flush_interval_seconds` | int | How often in-memory counters are written to the database. Default `300` (5 minutes). |
@@ -246,6 +276,36 @@ even across a dump1090-fa restart, an adsb-stats restart, or both at once.
 directly, not the aircraft.json counter - the two are not expected to add
 up to exactly the same number, since they're measuring at different layers
 of the pipeline.
+
+### How `alt_max` is validated
+
+A single SBS line's altitude field isn't always trustworthy, even when it
+parses as a plausible-looking number: dump1090-fa validates each
+aircraft's altitude internally before updating its own tracked state
+(what `aircraft.json`'s `alt_baro` reflects), but the SBS text line for
+that same message carries the raw, unvalidated per-message value
+regardless of whether dump1090-fa's own check passed or failed. A single
+bad decode can therefore produce a wildly wrong SBS altitude - too low as
+well as too high - for a message dump1090-fa itself already distrusts.
+
+`ingest.py` guards against this in two layers before a reading is folded
+into `alt_max`:
+
+1. A fast, in-memory check compares the new reading against that
+   aircraft's last accepted one, using its own reported vertical rate
+   (when known and recent) to judge whether the implied climb/descent
+   rate is physically plausible - no `aircraft.json` read needed for the
+   common case.
+2. If that check fails, `ingest.py` cross-checks dump1090-fa's own
+   tracked `alt_baro` for that aircraft via `aircraft.json` before
+   accepting or rejecting the reading, rather than trusting the SBS line
+   alone.
+
+Both layers log their outcome at `WARNING` level, so `journalctl -u
+adsb-stats | grep -i altitude` shows every case that needed the second
+layer, whether it was ultimately confirmed or rejected. This is normal,
+infrequent background activity, not itself a sign of a problem - see
+Error tracking below for actual collector errors.
 
 ### Error tracking
 

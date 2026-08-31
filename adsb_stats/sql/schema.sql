@@ -58,9 +58,16 @@ CREATE TABLE IF NOT EXISTS hourly_stats (
 
 -- Global dedup table: every unique ICAO ever observed by this station.
 CREATE TABLE IF NOT EXISTS seen_aircraft (
-  icao        TEXT PRIMARY KEY,
-  first_seen  TEXT NOT NULL,
-  last_seen   TEXT NOT NULL
+  icao             TEXT PRIMARY KEY,
+  first_seen       TEXT NOT NULL,
+  last_seen        TEXT NOT NULL,
+  -- Last altitude reading ingest.py accepted for this aircraft, and when.
+  -- Persisted (rather than kept only in ingest.py's in-memory state) so
+  -- the climb-rate plausibility check still has a baseline to compare
+  -- against right after a restart, instead of treating every aircraft's
+  -- next reading as first contact. NULL until an altitude is accepted.
+  last_altitude_ft REAL,
+  last_altitude_ts TEXT
 );
 
 -- Daily dedup table: unique (icao, callsign) pairs seen today. Truncated

@@ -12,10 +12,10 @@ from .db import (
     get_connection, upsert_hourly, upsert_daily, update_global_incremental,
     try_insert_aircraft, try_insert_flight, truncate_seen_today,
     batch_update_aircraft_last_seen, get_last_dump1090_msg_count,
-    update_error_stats
+    update_error_stats, get_last_altitudes, batch_update_aircraft_last_altitude
 )
 from .geo import haversine_distance
-from .aircraft_json import load_aircraft_json, get_message_count
+from .aircraft_json import load_aircraft_json, get_message_count, index_by_hex
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +25,48 @@ logger = logging.getLogger(__name__)
 # generous so it only rejects clearly-corrupted position data (e.g. a bad
 # CPR decode on dump1090-fa's side), never a genuine reading.
 MAX_PLAUSIBLE_DISTANCE_NM = 540
+
+# A corrupted-but-CRC-passing altitude message can land on a value that's
+# perfectly valid by format alone (see sbs_parser.py's MIN/MAX_ALTITUDE_FT
+# bounds), so a fixed range can't catch every bad reading - it has to be
+# checked against the same aircraft's own last accepted reading instead.
+# MAX_CLIMB_RATE_FT_PER_MIN is the fallback bound used only when this
+# aircraft has no recent reported vertical rate to calibrate against (see
+# VERTICAL_RATE_TOLERANCE_FT_PER_MIN below for the normal case) - it's set
+# far above genuine performance (well beyond even a fighter jet's
+# sustained rate) purely to reject corruption, never a real reading, since
+# without a reported rate to narrow against there's no better information
+# to calibrate on. MIN_PLAUSIBLE_ALTITUDE_DELTA_FT is a floor under both
+# bounds so two messages arriving a fraction of a second apart aren't held
+# to a near-zero allowance and false-reject ordinary encoding-quantization
+# jitter.
+MAX_CLIMB_RATE_FT_PER_MIN = 10000
+MIN_PLAUSIBLE_ALTITUDE_DELTA_FT = 250
+
+# When this aircraft has a recent reported vertical rate (SBS field 16,
+# "set for type 4" - see sbs_parser.py), the plausibility check centers on
+# *that* rate instead of the flat MAX_CLIMB_RATE_FT_PER_MIN bound, mirroring
+# readsb's own internal altitude-tracking check (track.c's updateAltitude):
+# expected change = reported_rate * elapsed time, allowed to be off by
+# VERTICAL_RATE_TOLERANCE_FT_PER_MIN per minute elapsed. This is far
+# tighter than the flat bound when an aircraft is reporting a normal climb/
+# descent/level rate, which is the common case. VERTICAL_RATE_MAX_AGE_MINUTES
+# bounds how long a reported rate stays trusted for this purpose - an
+# aircraft's true rate can change substantially within a couple minutes
+# (e.g. leveling off), so a stale rate falls back to the flat bound instead
+# of being trusted to narrow the window.
+VERTICAL_RATE_TOLERANCE_FT_PER_MIN = 1500
+VERTICAL_RATE_MAX_AGE_MINUTES = 2
+
+# If the SBS-only check above still finds a reading implausible, fall back
+# to comparing against dump1090-fa's own tracked alt_baro for that aircraft
+# (via aircraft.json) before rejecting outright - see _confirm_via_aircraft_json.
+# This tolerance is deliberately looser than MIN_PLAUSIBLE_ALTITUDE_DELTA_FT
+# since the aircraft.json poll happens a moment after the SBS line arrived,
+# not at the exact same instant, so some genuine climb/descent in that gap
+# is expected; it's still tight enough to clearly separate a genuine match
+# from the thousands-of-feet-off readings this whole check exists to catch.
+AIRCRAFT_JSON_CONFIRM_TOLERANCE_FT = 1000
 
 
 class IngestLoop:
@@ -59,6 +101,21 @@ class IngestLoop:
     dump1090-fa's raw Mode S traffic than what shows up as SBS lines.
     hourly_stats/daily_stats.msg_count remain SBS-line-counted; the two are
     not expected to reconcile exactly.
+
+    last_altitude/last_vertical_rate are separate from all of the above:
+    per-ICAO maps of each aircraft's last accepted altitude and last
+    reported vertical rate, kept for the lifetime of the process (see
+    _check_altitude/_within_plausible_change) rather than reset per
+    hour/day/flush, since they exist to catch a corrupted reading before
+    it ever reaches the counters above, not to feed the database directly.
+    last_altitude is also persisted to seen_aircraft (batched at flush
+    time, loaded back in run()) so a restart doesn't erase every
+    aircraft's baseline at once; last_vertical_rate is deliberately not
+    persisted - it's only ever used to narrow the plausibility window for
+    a reading that arrives soon after, so losing it to a restart just
+    means the next implausible-looking reading briefly falls back to the
+    flatter MAX_CLIMB_RATE_FT_PER_MIN bound until a fresh rate arrives,
+    which is harmless.
     """
 
     def __init__(self, config: dict[str, Any]) -> None:
@@ -99,6 +156,17 @@ class IngestLoop:
         self.error_count_flush = 0
         self.last_error_ts: Optional[str] = None
         self.last_error_msg: Optional[str] = None
+
+        # icao_hex -> (altitude_ft, time.monotonic() reference, ISO timestamp).
+        # The ISO timestamp is unused for last_altitude's own in-process
+        # comparisons (time.monotonic() is used for those) - it's carried
+        # only so flush() can persist a wall-clock value, and run() can
+        # convert it back into a correctly-backdated monotonic reference
+        # after a restart.
+        self.last_altitude: dict[str, tuple[int, float, str]] = {}
+        # icao_hex -> (vertical_rate_fpm, time.monotonic() when recorded).
+        # Never persisted - see the class docstring for why that's fine.
+        self.last_vertical_rate: dict[str, tuple[int, float]] = {}
 
         self.alt_max_hour: Optional[float] = None
         self.alt_max_hour_icao: Optional[str] = None
@@ -178,6 +246,168 @@ class IngestLoop:
         self.current_utc_date = current_date
         self.current_utc_hour = current_hour
 
+    def _get_recent_vertical_rate(self, icao_hex: str) -> Optional[int]:
+        """
+        Look up this aircraft's last reported vertical rate, if recent
+        enough to still be trusted (see VERTICAL_RATE_MAX_AGE_MINUTES).
+
+        Args:
+            icao_hex: Lowercase ICAO hex address.
+
+        Returns:
+            The vertical rate in fpm, or None if unknown or stale.
+        """
+        entry = self.last_vertical_rate.get(icao_hex)
+        if entry is None:
+            return None
+        vertical_rate_fpm, recorded_monotonic = entry
+        age_minutes = (time.monotonic() - recorded_monotonic) / 60
+        if age_minutes > VERTICAL_RATE_MAX_AGE_MINUTES:
+            return None
+        return vertical_rate_fpm
+
+    def _within_plausible_change(self, icao_hex: str, reference: tuple[int, float, str], altitude_ft: int) -> bool:
+        """
+        Check whether altitude_ft is reachable from a reference reading in
+        the time elapsed since it.
+
+        Mirrors readsb's own internal altitude-tracking check
+        (track.c's updateAltitude): if this aircraft has a recent reported
+        vertical rate, the expected change is that rate times the elapsed
+        time, allowed to be off by VERTICAL_RATE_TOLERANCE_FT_PER_MIN per
+        minute elapsed. Without a recent rate to calibrate against, falls
+        back to the flatter MAX_CLIMB_RATE_FT_PER_MIN bound.
+
+        Args:
+            icao_hex: Lowercase ICAO hex address.
+            reference: (altitude_ft, time.monotonic() reference, ISO
+                timestamp) to compare against - the timestamp is unused
+                here (see reset_counters).
+            altitude_ft: Newly-reported altitude, feet.
+
+        Returns:
+            True if the change from reference is plausible for the
+            elapsed time (with a MIN_PLAUSIBLE_ALTITUDE_DELTA_FT floor
+            for very small elapsed times).
+        """
+        reference_altitude_ft, reference_monotonic, _ = reference
+        elapsed_minutes = (time.monotonic() - reference_monotonic) / 60
+        actual_delta = altitude_ft - reference_altitude_ft
+
+        vertical_rate = self._get_recent_vertical_rate(icao_hex)
+        if vertical_rate is not None:
+            expected_delta = vertical_rate * elapsed_minutes
+            tolerance = max(
+                MIN_PLAUSIBLE_ALTITUDE_DELTA_FT,
+                VERTICAL_RATE_TOLERANCE_FT_PER_MIN * elapsed_minutes
+            )
+            return abs(actual_delta - expected_delta) <= tolerance
+
+        max_change = max(
+            MIN_PLAUSIBLE_ALTITUDE_DELTA_FT,
+            MAX_CLIMB_RATE_FT_PER_MIN * elapsed_minutes
+        )
+        return abs(actual_delta) <= max_change
+
+    def _confirm_via_aircraft_json(self, icao_hex: str, altitude_ft: int) -> bool:
+        """
+        Fall back to dump1090-fa's own tracked alt_baro for this aircraft
+        when the SBS-only check finds a reading implausible.
+
+        This is deliberately a last resort, not the primary check: it
+        means reading and parsing aircraft.json, which the primary
+        per-message check avoids doing on every reading. alt_baro reflects
+        dump1090-fa's own internally-validated altitude for this aircraft
+        (see CONTEXT.md's note on this), which is more authoritative than
+        anything derivable from a single SBS line alone.
+
+        Args:
+            icao_hex: Lowercase ICAO hex address.
+            altitude_ft: The SBS-reported altitude awaiting confirmation, feet.
+
+        Returns:
+            True if aircraft.json's alt_baro agrees (within
+            AIRCRAFT_JSON_CONFIRM_TOLERANCE_FT), False if it disagrees or
+            can't be checked (no current entry, or no numeric alt_baro -
+            e.g. the aircraft is on the ground).
+        """
+        aircraft = index_by_hex(load_aircraft_json(self.aircraft_json_path)).get(icao_hex)
+        if aircraft is None:
+            logger.warning(
+                "Cannot confirm altitude %d ft for %s: no current aircraft.json entry",
+                altitude_ft, icao_hex
+            )
+            return False
+
+        alt_baro = aircraft.get("alt_baro")
+        if not isinstance(alt_baro, (int, float)):
+            logger.warning(
+                "Cannot confirm altitude %d ft for %s: aircraft.json alt_baro is %r",
+                altitude_ft, icao_hex, alt_baro
+            )
+            return False
+
+        agrees = abs(altitude_ft - alt_baro) <= AIRCRAFT_JSON_CONFIRM_TOLERANCE_FT
+        if agrees:
+            logger.warning(
+                "Confirmed altitude %d ft for %s via aircraft.json (alt_baro=%s ft)",
+                altitude_ft, icao_hex, alt_baro
+            )
+        else:
+            logger.warning(
+                "Rejected altitude %d ft for %s: aircraft.json alt_baro=%s ft disagrees (diff %d ft)",
+                altitude_ft, icao_hex, alt_baro, abs(altitude_ft - alt_baro)
+            )
+        return agrees
+
+    def _check_altitude(self, icao_hex: str, altitude_ft: int, now_str: str) -> bool:
+        """
+        Validate a new altitude reading against this aircraft's history,
+        falling back to aircraft.json if the fast per-message check alone
+        finds it implausible.
+
+        A reading consistent with the aircraft's last accepted one (per
+        _within_plausible_change) is accepted immediately, with no I/O
+        beyond the SBS stream itself - this covers the overwhelming
+        majority of readings, including an aircraft legitimately holding a
+        steady high altitude for a long stretch. Only a reading that fails
+        that check triggers an aircraft.json lookup
+        (_confirm_via_aircraft_json) to resolve the ambiguity immediately,
+        rather than waiting to see if a later reading happens to agree
+        with it.
+
+        Updates self.last_altitude as a side effect - this is not a pure
+        predicate.
+
+        Args:
+            icao_hex: Lowercase ICAO hex address.
+            altitude_ft: Newly-reported altitude, feet.
+            now_str: Current message timestamp (ISO UTC string).
+
+        Returns:
+            True if this reading should be applied to the alt_max
+            counters, False if it was rejected by both checks.
+        """
+        now_monotonic = time.monotonic()
+        last = self.last_altitude.get(icao_hex)
+
+        if last is None or self._within_plausible_change(icao_hex, last, altitude_ft):
+            self.last_altitude[icao_hex] = (altitude_ft, now_monotonic, now_str)
+            return True
+
+        known_rate = self._get_recent_vertical_rate(icao_hex)
+        rate_desc = f"known vertical rate {known_rate} fpm" if known_rate is not None else "no known vertical rate (flat bound)"
+        logger.warning(
+            "SBS altitude check failed for %s: %d ft vs last accepted %d ft (%s) - checking aircraft.json",
+            icao_hex, altitude_ft, last[0], rate_desc
+        )
+
+        if self._confirm_via_aircraft_json(icao_hex, altitude_ft):
+            self.last_altitude[icao_hex] = (altitude_ft, now_monotonic, now_str)
+            return True
+
+        return False
+
     def _apply_altitude(self, altitude_ft: int, icao_hex: str, now_str: str) -> None:
         """Fold a new altitude reading into the hour/day/flush maxima."""
         if self.alt_max_hour is None or altitude_ft > self.alt_max_hour:
@@ -241,8 +471,18 @@ class IngestLoop:
                 self.uflights_day += 1
                 self.uflights_flush_delta += 1
 
+            if msg.vertical_rate_fpm is not None:
+                self.last_vertical_rate[msg.icao_hex] = (msg.vertical_rate_fpm, time.monotonic())
+
             if msg.altitude_ft is not None:
-                self._apply_altitude(msg.altitude_ft, msg.icao_hex, now_str)
+                if self._check_altitude(msg.icao_hex, msg.altitude_ft, now_str):
+                    self._apply_altitude(msg.altitude_ft, msg.icao_hex, now_str)
+                else:
+                    last_altitude_ft, _, _ = self.last_altitude[msg.icao_hex]
+                    logger.warning(
+                        "Rejected implausible altitude for %s: %d ft (last accepted: %d ft)",
+                        msg.icao_hex, msg.altitude_ft, last_altitude_ft
+                    )
 
             if msg.is_position and self.receiver_lat and self.receiver_lon:
                 distance = haversine_distance(
@@ -296,6 +536,12 @@ class IngestLoop:
 
         batch_update_aircraft_last_seen(self.conn, self.aircraft_updates)
         self.aircraft_updates.clear()
+
+        if self.last_altitude:
+            batch_update_aircraft_last_altitude(
+                self.conn,
+                [(icao, altitude_ft, ts) for icao, (altitude_ft, _, ts) in self.last_altitude.items()]
+            )
 
         hour_key = self.get_current_hour_key()
         upsert_hourly(self.conn, hour_key,
@@ -354,6 +600,29 @@ class IngestLoop:
         """
         raise KeyboardInterrupt()
 
+    def _load_persisted_altitudes(self) -> None:
+        """
+        Seed self.last_altitude from seen_aircraft so the climb-rate check
+        has a baseline immediately after a restart, instead of treating
+        every aircraft's next reading as first contact.
+
+        Converts each persisted wall-clock timestamp into a correctly
+        backdated time.monotonic() reference - a monotonic value from a
+        previous process run has no meaning after a restart, so without
+        this conversion a reloaded reading would look like it just
+        happened, giving it an artificially tight allowance instead of one
+        reflecting how long it's actually been since it was recorded.
+        """
+        now_monotonic = time.monotonic()
+        now_wall = datetime.now(timezone.utc)
+        for icao_hex, (altitude_ft, ts_str) in get_last_altitudes(self.conn).items():
+            try:
+                recorded_at = datetime.strptime(ts_str, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+            except ValueError:
+                continue
+            elapsed_seconds = (now_wall - recorded_at).total_seconds()
+            self.last_altitude[icao_hex] = (altitude_ft, now_monotonic - elapsed_seconds, ts_str)
+
     def run(self) -> None:
         """Connect to the SBS stream and process messages until interrupted."""
         self.running = True
@@ -362,6 +631,7 @@ class IngestLoop:
         self.aircraft_updates = []
         self.conn = get_connection(self.db_path)
         self.last_dump1090_msg_count = get_last_dump1090_msg_count(self.conn)
+        self._load_persisted_altitudes()
 
         now = datetime.now(timezone.utc)
         self.current_utc_date = now.strftime("%Y-%m-%d")
