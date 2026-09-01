@@ -297,13 +297,26 @@ into `alt_max`:
    rate is physically plausible - no `aircraft.json` read needed for the
    common case.
 2. If that check fails, `ingest.py` cross-checks dump1090-fa's own
-   tracked `alt_baro` for that aircraft via `aircraft.json` before
-   accepting or rejecting the reading, rather than trusting the SBS line
-   alone.
+   tracked `alt_baro` for that aircraft via `aircraft.json`.
+
+`aircraft.json`'s `alt_baro` is a second opinion, not a ground truth,
+though - it's been observed to itself be transiently wrong (dump1090-fa
+has its own "trust a clean-looking message anyway" escape valve, and a
+newly-acquired aircraft gives it no more history to check against than
+`adsb_stats` has). So a reading that only passes via the second layer
+doesn't get applied to `alt_max` immediately - it's held as
+**provisional**: it updates the comparison baseline so this aircraft's
+*next* reading is judged against the right reference, but only actually
+counts as a new `alt_max` once that next reading independently agrees
+with it through the fast first-layer check. In practice this costs a
+genuine new peak a few seconds' delay; in exchange, a bad `alt_baro`
+confirmation can never permanently corrupt `alt_max` by itself, since a
+wrong provisional value simply won't be corroborated by whatever the
+aircraft reports next.
 
 Both layers log their outcome at `WARNING` level, so `journalctl -u
 adsb-stats | grep -i altitude` shows every case that needed the second
-layer, whether it was ultimately confirmed or rejected. This is normal,
+layer, including which readings were only provisional. This is normal,
 infrequent background activity, not itself a sign of a problem - see
 Error tracking below for actual collector errors.
 

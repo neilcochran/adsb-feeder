@@ -4,6 +4,7 @@ import logging
 import signal
 import time
 from datetime import datetime, timezone
+from enum import Enum
 from typing import Any, Optional
 
 from .sbs_client import SBSClient
@@ -69,6 +70,22 @@ VERTICAL_RATE_MAX_AGE_MINUTES = 2
 AIRCRAFT_JSON_CONFIRM_TOLERANCE_FT = 1000
 
 
+class AltitudeCheckResult(Enum):
+    """
+    Outcome of _check_altitude - three states, not two, because an
+    aircraft.json confirmation is trusted enough to update the comparison
+    baseline for this aircraft's *next* reading, but not (on its own)
+    trusted enough to become a permanent alt_max record. dump1090-fa's own
+    tracked alt_baro is a second opinion, not a ground truth - it has the
+    same "trust a clean-looking message even if implausible" escape valve
+    our own check does, and for a barely-established contact it has no
+    more history to validate against than we do. See _check_altitude.
+    """
+    ACCEPTED = "accepted"        # apply to alt_max now
+    PROVISIONAL = "provisional"  # baseline updated; needs the next reading to corroborate it first
+    REJECTED = "rejected"        # neither check passed
+
+
 class IngestLoop:
     """Main ingestion loop coordinating the SBS client, parser, and database.
 
@@ -116,6 +133,13 @@ class IngestLoop:
     means the next implausible-looking reading briefly falls back to the
     flatter MAX_CLIMB_RATE_FT_PER_MIN bound until a fresh rate arrives,
     which is harmless.
+
+    A reading that only passes _check_altitude via the aircraft.json
+    fallback updates last_altitude but is *not* applied to alt_max
+    immediately (see AltitudeCheckResult.PROVISIONAL) - it has to be
+    independently corroborated by this same aircraft's next reading
+    first, since aircraft.json's alt_baro has been observed to itself be
+    transiently wrong in the same way a raw SBS reading can be.
     """
 
     def __init__(self, config: dict[str, Any]) -> None:
@@ -316,10 +340,11 @@ class IngestLoop:
 
         This is deliberately a last resort, not the primary check: it
         means reading and parsing aircraft.json, which the primary
-        per-message check avoids doing on every reading. alt_baro reflects
-        dump1090-fa's own internally-validated altitude for this aircraft
-        (see CONTEXT.md's note on this), which is more authoritative than
-        anything derivable from a single SBS line alone.
+        per-message check avoids doing on every reading. A True result
+        here is enough for _check_altitude to trust this as the new
+        comparison baseline, but not enough on its own to become an
+        alt_max record - see AltitudeCheckResult and _check_altitude for
+        why alt_baro is treated as a second opinion, not a ground truth.
 
         Args:
             icao_hex: Lowercase ICAO hex address.
@@ -350,7 +375,8 @@ class IngestLoop:
         agrees = abs(altitude_ft - alt_baro) <= AIRCRAFT_JSON_CONFIRM_TOLERANCE_FT
         if agrees:
             logger.warning(
-                "Confirmed altitude %d ft for %s via aircraft.json (alt_baro=%s ft)",
+                "Confirmed altitude %d ft for %s via aircraft.json (alt_baro=%s ft) - "
+                "provisional until the next reading corroborates it",
                 altitude_ft, icao_hex, alt_baro
             )
         else:
@@ -360,24 +386,40 @@ class IngestLoop:
             )
         return agrees
 
-    def _check_altitude(self, icao_hex: str, altitude_ft: int, now_str: str) -> bool:
+    def _check_altitude(self, icao_hex: str, altitude_ft: int, now_str: str) -> AltitudeCheckResult:
         """
         Validate a new altitude reading against this aircraft's history,
         falling back to aircraft.json if the fast per-message check alone
         finds it implausible.
 
         A reading consistent with the aircraft's last accepted one (per
-        _within_plausible_change) is accepted immediately, with no I/O
+        _within_plausible_change) is ACCEPTED immediately, with no I/O
         beyond the SBS stream itself - this covers the overwhelming
         majority of readings, including an aircraft legitimately holding a
-        steady high altitude for a long stretch. Only a reading that fails
-        that check triggers an aircraft.json lookup
-        (_confirm_via_aircraft_json) to resolve the ambiguity immediately,
-        rather than waiting to see if a later reading happens to agree
-        with it.
+        steady high altitude for a long stretch.
 
-        Updates self.last_altitude as a side effect - this is not a pure
-        predicate.
+        A reading that fails that check triggers an aircraft.json lookup
+        (_confirm_via_aircraft_json). If aircraft.json disagrees (or can't
+        be checked), the reading is REJECTED and self.last_altitude is
+        left untouched. If aircraft.json agrees, the reading is only
+        PROVISIONAL, not ACCEPTED: it updates self.last_altitude so this
+        aircraft's *next* reading compares against the right baseline,
+        but does not get applied to alt_max yet. dump1090-fa's own
+        tracked alt_baro is a second opinion, not a ground truth - real
+        cases have shown it can itself be transiently wrong, either
+        because dump1090-fa has the same "trust a clean-looking message
+        even if implausible" escape valve this check does, or because a
+        barely-established contact has no more history for dump1090-fa to
+        validate against than we do. Requiring the *next* reading to
+        independently agree (via the normal ACCEPTED path, once
+        self.last_altitude reflects the new value) means a wrong
+        confirmation can never permanently corrupt alt_max on its own: if
+        it was wrong, the aircraft's real next reading won't match it
+        either, another aircraft.json check gets triggered, and nothing
+        gets recorded until something actually holds up.
+
+        Updates self.last_altitude as a side effect for ACCEPTED and
+        PROVISIONAL results - this is not a pure predicate.
 
         Args:
             icao_hex: Lowercase ICAO hex address.
@@ -385,15 +427,14 @@ class IngestLoop:
             now_str: Current message timestamp (ISO UTC string).
 
         Returns:
-            True if this reading should be applied to the alt_max
-            counters, False if it was rejected by both checks.
+            The outcome - see AltitudeCheckResult.
         """
         now_monotonic = time.monotonic()
         last = self.last_altitude.get(icao_hex)
 
         if last is None or self._within_plausible_change(icao_hex, last, altitude_ft):
             self.last_altitude[icao_hex] = (altitude_ft, now_monotonic, now_str)
-            return True
+            return AltitudeCheckResult.ACCEPTED
 
         known_rate = self._get_recent_vertical_rate(icao_hex)
         rate_desc = f"known vertical rate {known_rate} fpm" if known_rate is not None else "no known vertical rate (flat bound)"
@@ -404,9 +445,9 @@ class IngestLoop:
 
         if self._confirm_via_aircraft_json(icao_hex, altitude_ft):
             self.last_altitude[icao_hex] = (altitude_ft, now_monotonic, now_str)
-            return True
+            return AltitudeCheckResult.PROVISIONAL
 
-        return False
+        return AltitudeCheckResult.REJECTED
 
     def _apply_altitude(self, altitude_ft: int, icao_hex: str, now_str: str) -> None:
         """Fold a new altitude reading into the hour/day/flush maxima."""
@@ -475,14 +516,20 @@ class IngestLoop:
                 self.last_vertical_rate[msg.icao_hex] = (msg.vertical_rate_fpm, time.monotonic())
 
             if msg.altitude_ft is not None:
-                if self._check_altitude(msg.icao_hex, msg.altitude_ft, now_str):
+                result = self._check_altitude(msg.icao_hex, msg.altitude_ft, now_str)
+                if result is AltitudeCheckResult.ACCEPTED:
                     self._apply_altitude(msg.altitude_ft, msg.icao_hex, now_str)
-                else:
+                elif result is AltitudeCheckResult.REJECTED:
                     last_altitude_ft, _, _ = self.last_altitude[msg.icao_hex]
                     logger.warning(
                         "Rejected implausible altitude for %s: %d ft (last accepted: %d ft)",
                         msg.icao_hex, msg.altitude_ft, last_altitude_ft
                     )
+                # PROVISIONAL: self.last_altitude was already updated inside
+                # _check_altitude (see AltitudeCheckResult) - this reading
+                # needs the aircraft's next one to corroborate it before it
+                # can count toward alt_max, so there's nothing further to
+                # do with it here.
 
             if msg.is_position and self.receiver_lat and self.receiver_lon:
                 distance = haversine_distance(
