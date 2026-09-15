@@ -5,7 +5,8 @@
 `adsb_stats` is a lightweight background collector that connects to
 dump1090-fa's SBS/BaseStation output and maintains aggregate ADS-B
 statistics (message counts, unique aircraft/flights, altitude and
-reception-distance records) in a local SQLite database. It consumes
+reception-distance records), plus a log of any emergency squawks heard,
+in a local SQLite database. It consumes
 dump1090-fa's own already-decoded output rather than raw Beast/Mode S -
 there is no independent message decoding here, only parsing and
 aggregation. This is deliberate: dump1090-fa's own decoder already handles
@@ -129,7 +130,8 @@ python3 -m adsb_stats.cli run
 
 ### `status`
 
-Print current all-time totals:
+Print current all-time totals, including how many emergency squawk
+events have been recorded and the most recent one:
 
 ```bash
 python3 -m adsb_stats.cli status
@@ -140,12 +142,13 @@ python3 -m adsb_stats.cli status
 Export a stats table to CSV or JSON, to a file or stdout:
 
 ```bash
-python3 -m adsb_stats.cli export --table {global,daily,hourly} [--format {csv,json}] [--output PATH]
+python3 -m adsb_stats.cli export --table {global,daily,hourly,emergencies} [--format {csv,json}] [--output PATH]
 ```
 
 ```bash
 python3 -m adsb_stats.cli export --table daily --format json
 python3 -m adsb_stats.cli export --table hourly --format csv --output hourly.csv
+python3 -m adsb_stats.cli export --table emergencies
 ```
 
 ### `query`
@@ -161,6 +164,7 @@ python3 -m adsb_stats.cli query <name> [--format {table,csv,json}] [--output PAT
 ```bash
 python3 -m adsb_stats.cli query busiest_hours
 python3 -m adsb_stats.cli query daily_summary --format json --output daily.json
+python3 -m adsb_stats.cli query emergency_events
 ```
 
 Saved queries are plain `.sql` files named `<name>.sql`; a leading `--`
@@ -239,7 +243,8 @@ you edit the "wrong" config file, the service won't see the change.
 
 ## Data Model
 
-Three tables track statistics at different granularities:
+Three tables track statistics at different granularities, plus one
+event log:
 
 - **`global_stats`** - a single row of all-time totals: message count,
   unique aircraft/flights, max altitude/distance (with which aircraft and
@@ -252,6 +257,11 @@ Three tables track statistics at different granularities:
   count, unique aircraft, altitude/distance maxima) for trend charts.
   Altitude maxima carry which aircraft and when, same as `daily_stats`;
   distance maxima don't have per-hour attribution.
+- **`emergency_events`** - one row per confirmed emergency squawk (7500,
+  7600, or 7700): which aircraft, which code, when it was first and last
+  heard, how many squawk messages made up the event, and a snapshot of
+  callsign, altitude, position, and distance at confirmation time. See
+  Emergency squawk events below.
 
 Unique aircraft are deduplicated by ICAO hex address for the lifetime of
 the database. Unique flights are deduplicated by (ICAO, callsign) per day;
@@ -319,6 +329,39 @@ adsb-stats | grep -i altitude` shows every case that needed the second
 layer, including which readings were only provisional. This is normal,
 infrequent background activity, not itself a sign of a problem - see
 Error tracking below for actual collector errors.
+
+### Emergency squawk events
+
+dump1090-fa's SBS output carries each aircraft's Mode A squawk on its
+surveillance-ID lines. When one of the three reserved emergency codes
+shows up, `ingest.py` does not record it straight away: a transponder
+being re-dialed by hand can pass through 7500/7600/7700 on its way to
+another code, and a single Mode A reply decoded in that instant looks
+identical to the real thing. An event is only opened once the same
+aircraft has repeated the same code at least twice across at least five
+seconds. A genuine emergency code stays set for minutes at the very
+least, so it clears that bar within seconds; a code dialed through in
+passing does not, and is dropped after a minute without a repeat.
+
+Once confirmed, the event row is written immediately (not held for the
+next flush - these are rare and worth not losing to a crash) with a
+snapshot of the aircraft's callsign, altitude, and position pulled from
+`aircraft.json`, since the SBS lines carrying the squawk carry nothing
+else useful. The row's `last_ts`/`msg_count` are then refreshed every
+flush for as long as the aircraft keeps squawking that code. The event
+closes when the aircraft reports a different squawk, or after ten
+minutes without hearing a squawk from it. A service restart in the
+middle of an event resumes it rather than opening a second row, as long
+as the restart happens within that same ten-minute window.
+
+Every stage logs at `WARNING` level (first sighting, confirmation,
+close), so `journalctl -u adsb-stats | grep -i emergency` shows the whole
+history including sightings that never confirmed. `status` shows the
+running count and the most recent event; `query emergency_events` or
+`export --table emergencies` lists them all.
+
+The confirmation thresholds and timeouts are the `EMERGENCY_*` constants
+at the top of `ingest.py`.
 
 ### Error tracking
 

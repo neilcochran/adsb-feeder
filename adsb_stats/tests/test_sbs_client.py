@@ -44,8 +44,10 @@ def main():
     ident_count = 0
     position_count = 0
     altitude_only_count = 0
+    squawk_count = 0
     seen_icaos = set()
     last_position = {}  # icao_hex -> (lat, lon, altitude_ft)
+    emergency_squawks = {}  # icao_hex -> emergency squawk code seen
 
     stop = False
 
@@ -86,6 +88,10 @@ def main():
                     last_position[msg.icao_hex] = (msg.lat, msg.lon, msg.altitude_ft)
                 elif msg.altitude_ft is not None:
                     altitude_only_count += 1
+                if msg.squawk is not None:
+                    squawk_count += 1
+                    if msg.is_emergency:
+                        emergency_squawks[msg.icao_hex] = msg.squawk
 
             now = time.time()
             if now - last_report >= 5:
@@ -108,7 +114,11 @@ def main():
     print(f"  Identification messages:  {ident_count:,}")
     print(f"  Position messages:        {position_count:,}")
     print(f"  Altitude-only messages:   {altitude_only_count:,}")
+    print(f"  Squawk messages:          {squawk_count:,}")
     print(f"  Unique ICAOs seen:        {len(seen_icaos)}")
+    if emergency_squawks:
+        seen = ", ".join(f"{icao}={code}" for icao, code in sorted(emergency_squawks.items()))
+        print(f"  Emergency squawks seen:   {seen}")
 
     if not last_position:
         print(f"{'=' * 60}")
