@@ -35,6 +35,7 @@ All services are enabled at boot via `systemctl enable`.
 | `fr24feed` | `fr24`/`fr24` | always | [FR24 installer](https://repo-feed.flightradar24.com/rpi/feeds/installer.sh) |
 | `adsbexchange-feed` | `adsbexchange` | always / 30s | [ADSBX feed.sh](https://adsbexchange.com/feed.sh) |
 | `adsbexchange-mlat` | `adsbexchange` | always / 30s | [ADSBX feed.sh](https://adsbexchange.com/feed.sh) |
+| `adsbexchange-stats` | `adsbexchange` | always / 30s | [ADSBX stats.sh](https://adsbexchange.com/stats.sh) |
 | `generate-pirehose-cert` | `root` | oneshot, RemainAfterExit | shipped with piaware package |
 | **`adsb-stats`** | `adsbstats` | on-failure / 10s | **this repo** |
 
@@ -42,7 +43,7 @@ All services are enabled at boot via `systemctl enable`.
 
 - **Upstream** (installed by package scripts, do not edit):
   `dump1090-fa`, `piaware`, `fr24feed`, `adsbexchange-feed`, `adsbexchange-mlat`,
-  `generate-pirehose-cert`.
+  `adsbexchange-stats`, `generate-pirehose-cert`.
 
 - **Owned by this repo**:
   `adsb-stats.service` — install via `install.sh`.
@@ -56,6 +57,7 @@ network-online.target
             ├── fr24feed          (After=network-online.target; reads AVR port 30002)
             ├── adsbexchange-feed  (After=network.target; reads Beast port 30005)
             ├── adsbexchange-mlat  (After=network.target; reads Beast port 30005)
+            ├── adsbexchange-stats (no ordering; reports feed status to ADSBX)
             └── adsb-stats        (After=dump1090-fa; reads SBS port 30003)
 ```
 
@@ -68,9 +70,9 @@ loop has its own reconnection logic with exponential backoff.
 ```bash
 # Quick status check
 systemctl status dump1090-fa piaware fr24feed \
-    adsbexchange-feed adsbexchange-mlat adsb-stats
+    adsbexchange-feed adsbexchange-mlat adsbexchange-stats adsb-stats
 
 # Confirm all are enabled at boot
 systemctl is-enabled dump1090-fa piaware fr24feed \
-    adsbexchange-feed adsbexchange-mlat adsb-stats
+    adsbexchange-feed adsbexchange-mlat adsbexchange-stats adsb-stats
 ```

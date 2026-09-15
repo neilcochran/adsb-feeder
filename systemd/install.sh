@@ -128,6 +128,7 @@ EXPECTED_SERVICES=(
     fr24feed
     adsbexchange-feed
     adsbexchange-mlat
+    adsbexchange-stats
     adsb-stats
 )
 
@@ -135,8 +136,8 @@ for svc in "${EXPECTED_SERVICES[@]}"; do
     # Check if the unit file exists (may not be installed on mobile)
     if systemctl list-unit-files "$svc.service" &>/dev/null \
        && [[ -n "$(systemctl list-unit-files "$svc.service" 2>/dev/null | grep "$svc")" ]]; then
-        state=$(systemctl is-active "$svc" 2>/dev/null || echo "not-running")
-        enabled=$(systemctl is-enabled "$svc" 2>/dev/null || echo "not-enabled")
+        state=$(systemctl is-active "$svc" 2>/dev/null || true)
+        enabled=$(systemctl is-enabled "$svc" 2>/dev/null || true)
         printf "  %-25s  active: %-10s  enabled: %s\n" "$svc" "$state" "$enabled"
     else
         printf "  %-25s  (not installed — OK on mobile unit)\n" "$svc"

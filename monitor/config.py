@@ -37,6 +37,7 @@ FEEDER_SERVICES = [
     "fr24feed",
     "adsbexchange-feed",
     "adsbexchange-mlat",
+    "adsbexchange-stats",
 ]
 ADSB_STATS_SERVICE = "adsb-stats"
 

@@ -29,7 +29,7 @@ def _get_ssid(iface: str) -> str:
             )
             if result.returncode == 0 and result.stdout.strip():
                 return result.stdout.strip()
-        except (subprocess.SubprocessError, FileNotFoundError):
+        except (subprocess.SubprocessError, OSError):
             continue
 
     try:
@@ -40,7 +40,7 @@ def _get_ssid(iface: str) -> str:
         for line in result.stdout.splitlines():
             if "SSID" in line.upper():
                 return line.split("SSID:")[-1].strip()
-    except (subprocess.SubprocessError, FileNotFoundError):
+    except (subprocess.SubprocessError, OSError):
         pass
 
     return "N/A"

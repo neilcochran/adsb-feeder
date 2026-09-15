@@ -26,7 +26,7 @@ def systemctl_is_active(svc: str) -> str:
             timeout=5,
         )
         return result.stdout.strip() or "unknown"
-    except (subprocess.SubprocessError, FileNotFoundError):
+    except (subprocess.SubprocessError, OSError):
         return "unknown"
 
 
@@ -49,7 +49,7 @@ def get_restart_count(svc: str) -> int | None:
         )
         if result.returncode == 0 and result.stdout.strip().isdigit():
             return int(result.stdout.strip())
-    except (subprocess.SubprocessError, ValueError, FileNotFoundError):
+    except (subprocess.SubprocessError, ValueError, OSError):
         pass
     return None
 
@@ -77,6 +77,6 @@ def get_service_restart_age(svc: str) -> timedelta | None:
             # Parse format like "Thu 2026-08-23 02:49:39 UTC"
             dt = datetime.strptime(timestamp_str, "%a %Y-%m-%d %H:%M:%S %Z")
             return datetime.now(timezone.utc).replace(tzinfo=None) - dt
-    except (subprocess.SubprocessError, ValueError, FileNotFoundError):
+    except (subprocess.SubprocessError, ValueError, OSError):
         pass
     return None
