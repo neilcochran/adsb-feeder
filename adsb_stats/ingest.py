@@ -3,17 +3,19 @@
 import logging
 import signal
 import time
-from datetime import datetime, timezone
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any, Optional
 
 from .sbs_client import SBSClient
-from .sbs_parser import parse_sbs_line
+from .sbs_parser import SBSMessage, parse_sbs_line
 from .db import (
     get_connection, upsert_hourly, upsert_daily, update_global_incremental,
     try_insert_aircraft, try_insert_flight, truncate_seen_today,
     batch_update_aircraft_last_seen, get_last_dump1090_msg_count,
-    update_error_stats, get_last_altitudes, batch_update_aircraft_last_altitude
+    update_error_stats, get_last_altitudes, batch_update_aircraft_last_altitude,
+    insert_emergency_event, update_emergency_event, get_recent_emergency_events
 )
 from .geo import haversine_distance
 from .aircraft_json import load_aircraft_json, get_message_count, index_by_hex
@@ -69,6 +71,39 @@ VERTICAL_RATE_MAX_AGE_MINUTES = 2
 # from the thousands-of-feet-off readings this whole check exists to catch.
 AIRCRAFT_JSON_CONFIRM_TOLERANCE_FT = 1000
 
+# Wall-clock format for every timestamp this module writes or reads back.
+TIMESTAMP_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
+
+# A transponder being re-dialed by hand can pass through 7500/7600/7700
+# on its way to the intended code, and dump1090-fa faithfully emits
+# whatever Mode A reply it decodes in that instant. So an emergency
+# squawk only opens an event once the same aircraft has repeated the same
+# code at least EMERGENCY_CONFIRM_MESSAGES times spanning at least
+# EMERGENCY_CONFIRM_SECONDS. A genuine emergency code stays set for
+# minutes at the very least, so it clears this bar within seconds under
+# normal SSR interrogation; a code dialed through in passing doesn't.
+EMERGENCY_CONFIRM_MESSAGES = 2
+EMERGENCY_CONFIRM_SECONDS = 5
+
+# A pending (not yet confirmed) emergency sighting is forgotten if the
+# code isn't seen again within this long - see _maintain_emergencies.
+# Squawk-bearing SBS lines are sparse: a live 60 s capture at this station
+# showed roughly one per aircraft every 45 s, so a genuine emergency's
+# second message can easily arrive more than a minute after its first.
+# The window has to comfortably outlast that gap or a real event would
+# keep expiring before it could confirm. A non-emergency squawk from the
+# same aircraft still clears a pending sighting immediately, so the
+# longer window doesn't weaken the dial-through defense.
+EMERGENCY_PENDING_TIMEOUT_SECONDS = 300
+
+# An open event is closed as soon as the aircraft reports a different
+# squawk, or once nothing has been heard from it for this long (checked
+# at flush time, so the effective delay is this plus up to one flush
+# interval). Also the window within which an event still open when the
+# process last stopped is resumed on startup rather than duplicated - see
+# _resume_open_emergencies.
+EMERGENCY_IDLE_TIMEOUT_SECONDS = 600
+
 
 class AltitudeCheckResult(Enum):
     """
@@ -84,6 +119,26 @@ class AltitudeCheckResult(Enum):
     ACCEPTED = "accepted"        # apply to alt_max now
     PROVISIONAL = "provisional"  # baseline updated; needs the next reading to corroborate it first
     REJECTED = "rejected"        # neither check passed
+
+
+@dataclass
+class PendingEmergency:
+    """An emergency squawk seen from one aircraft but not yet confirmed."""
+    squawk: str
+    first_ts: str            # ISO timestamp of the first sighting
+    first_monotonic: float   # time.monotonic() at the first sighting
+    last_monotonic: float    # time.monotonic() at the most recent sighting
+    msg_count: int
+
+
+@dataclass
+class OpenEmergency:
+    """A confirmed emergency event, already written to emergency_events."""
+    event_id: int            # emergency_events.id
+    squawk: str
+    last_ts: str             # ISO timestamp of the most recent sighting
+    last_monotonic: float    # time.monotonic() at the most recent sighting
+    msg_count: int
 
 
 class IngestLoop:
@@ -140,6 +195,14 @@ class IngestLoop:
     independently corroborated by this same aircraft's next reading
     first, since aircraft.json's alt_baro has been observed to itself be
     transiently wrong in the same way a raw SBS reading can be.
+
+    pending_emergencies/open_emergencies track emergency squawks (see
+    _track_squawk) and are the one place this loop writes a row per event
+    rather than a period aggregate. A confirmed emergency is inserted into
+    emergency_events the moment it's confirmed, not held until the next
+    flush, because events are rare and losing one to a crash between
+    flushes would defeat the point; flushes only refresh each open event's
+    last_ts/msg_count. Neither map is reset per hour/day/flush.
     """
 
     def __init__(self, config: dict[str, Any]) -> None:
@@ -192,6 +255,12 @@ class IngestLoop:
         # Never persisted - see the class docstring for why that's fine.
         self.last_vertical_rate: dict[str, tuple[int, float]] = {}
 
+        # icao_hex -> sighting/event state for emergency squawks - see
+        # _track_squawk. open_emergencies is also seeded from the database
+        # in run() (see _resume_open_emergencies).
+        self.pending_emergencies: dict[str, PendingEmergency] = {}
+        self.open_emergencies: dict[str, OpenEmergency] = {}
+
         self.alt_max_hour: Optional[float] = None
         self.alt_max_hour_icao: Optional[str] = None
         self.alt_max_hour_ts: Optional[str] = None
@@ -216,7 +285,7 @@ class IngestLoop:
 
     def get_current_timestamp(self) -> str:
         """Get current UTC timestamp as ISO string."""
-        return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        return datetime.now(timezone.utc).strftime(TIMESTAMP_FORMAT)
 
     def get_current_hour_key(self) -> str:
         """Get current hour key for hourly_stats (YYYY-MM-DD HH:00)."""
@@ -515,6 +584,9 @@ class IngestLoop:
             if msg.vertical_rate_fpm is not None:
                 self.last_vertical_rate[msg.icao_hex] = (msg.vertical_rate_fpm, time.monotonic())
 
+            if msg.squawk is not None:
+                self._track_squawk(msg, now_str)
+
             if msg.altitude_ft is not None:
                 result = self._check_altitude(msg.icao_hex, msg.altitude_ft, now_str)
                 if result is AltitudeCheckResult.ACCEPTED:
@@ -543,6 +615,175 @@ class IngestLoop:
             self.last_error_ts = self.get_current_timestamp()
             self.last_error_msg = f"{type(e).__name__}: {e}"[:200]
             logger.error("Error processing message: %s", e)
+
+    def _track_squawk(self, msg: SBSMessage, now_str: str) -> None:
+        """
+        Fold one squawk report into the emergency-event state machine.
+
+        A squawk from an aircraft with an open event either extends that
+        event (same code) or closes it (any other code). Otherwise an
+        emergency code is only *pending* on first sight, and opens an
+        event once it has been repeated enough to clear the
+        EMERGENCY_CONFIRM_MESSAGES / EMERGENCY_CONFIRM_SECONDS bar. A
+        non-emergency code from an aircraft with a pending sighting
+        discards the sighting as the transient it evidently was.
+
+        Args:
+            msg: The parsed message - msg.squawk must not be None.
+            now_str: Current message timestamp (ISO UTC string).
+        """
+        now_monotonic = time.monotonic()
+        icao_hex = msg.icao_hex
+
+        open_event = self.open_emergencies.get(icao_hex)
+        if open_event is not None:
+            if msg.squawk == open_event.squawk:
+                open_event.last_ts = now_str
+                open_event.last_monotonic = now_monotonic
+                open_event.msg_count += 1
+                return
+            self._close_emergency(icao_hex, f"squawk changed to {msg.squawk}")
+
+        pending = self.pending_emergencies.get(icao_hex)
+        if not msg.is_emergency:
+            if pending is not None:
+                del self.pending_emergencies[icao_hex]
+                logger.info(
+                    "Unconfirmed emergency squawk %s from %s cleared by squawk %s after %d message(s)",
+                    pending.squawk, icao_hex, msg.squawk, pending.msg_count
+                )
+            return
+
+        if pending is None or pending.squawk != msg.squawk:
+            self.pending_emergencies[icao_hex] = PendingEmergency(
+                squawk=msg.squawk, first_ts=now_str,
+                first_monotonic=now_monotonic, last_monotonic=now_monotonic, msg_count=1
+            )
+            logger.warning("Emergency squawk %s seen from %s - awaiting confirmation", msg.squawk, icao_hex)
+            return
+
+        pending.msg_count += 1
+        pending.last_monotonic = now_monotonic
+        if (pending.msg_count >= EMERGENCY_CONFIRM_MESSAGES
+                and now_monotonic - pending.first_monotonic >= EMERGENCY_CONFIRM_SECONDS):
+            del self.pending_emergencies[icao_hex]
+            self._open_emergency(msg, pending, now_str)
+
+    def _snapshot_from_aircraft_json(self, icao_hex: str) -> tuple[Optional[str], Optional[float], Optional[float], Optional[float]]:
+        """
+        Pull the callsign, barometric altitude, and position dump1090-fa
+        currently holds for an aircraft, to record alongside a newly
+        confirmed emergency event.
+
+        The SBS lines that carry a squawk carry no callsign or position,
+        so this is a one-off aircraft.json read for fields SBS can't
+        supply - acceptable I/O for something that happens at most a
+        handful of times a year.
+
+        Args:
+            icao_hex: Lowercase ICAO hex address.
+
+        Returns:
+            (callsign, altitude_ft, lat, lon) - each None if dump1090-fa
+            has no current value for it (or no entry for the aircraft).
+        """
+        aircraft = index_by_hex(load_aircraft_json(self.aircraft_json_path)).get(icao_hex)
+        if aircraft is None:
+            return None, None, None, None
+
+        callsign = (aircraft.get("flight") or "").strip() or None
+
+        alt_baro = aircraft.get("alt_baro")
+        altitude_ft = float(alt_baro) if isinstance(alt_baro, (int, float)) else None
+
+        lat = aircraft.get("lat")
+        lon = aircraft.get("lon")
+        if not isinstance(lat, (int, float)) or not isinstance(lon, (int, float)):
+            lat = lon = None
+
+        return callsign, altitude_ft, lat, lon
+
+    def _open_emergency(self, msg: SBSMessage, pending: PendingEmergency, now_str: str) -> None:
+        """
+        Record a confirmed emergency squawk as a new emergency_events row
+        and start tracking it as open.
+
+        Written immediately rather than at the next flush - see the class
+        docstring.
+
+        Args:
+            msg: The message that cleared the confirmation bar.
+            pending: The pending sighting being promoted.
+            now_str: Current message timestamp (ISO UTC string).
+        """
+        callsign, altitude_ft, lat, lon = self._snapshot_from_aircraft_json(msg.icao_hex)
+        if altitude_ft is None:
+            if msg.altitude_ft is not None:
+                altitude_ft = float(msg.altitude_ft)
+            elif msg.icao_hex in self.last_altitude:
+                altitude_ft = float(self.last_altitude[msg.icao_hex][0])
+
+        dist_nm = None
+        if lat is not None and self.receiver_lat and self.receiver_lon:
+            distance = haversine_distance(self.receiver_lat, self.receiver_lon, lat, lon)
+            if distance <= MAX_PLAUSIBLE_DISTANCE_NM:
+                dist_nm = distance
+
+        event_id = insert_emergency_event(
+            self.conn, msg.icao_hex, msg.squawk, callsign, pending.first_ts, now_str,
+            pending.msg_count, altitude_ft, lat, lon, dist_nm
+        )
+        self.open_emergencies[msg.icao_hex] = OpenEmergency(
+            event_id=event_id, squawk=msg.squawk, last_ts=now_str,
+            last_monotonic=time.monotonic(), msg_count=pending.msg_count
+        )
+
+        altitude_desc = "unknown alt" if altitude_ft is None else f"{int(altitude_ft)} ft"
+        distance_desc = "unknown dist" if dist_nm is None else f"{dist_nm:.1f} nm"
+        logger.warning(
+            "EMERGENCY squawk %s confirmed from %s (callsign %s, %s, %s) - opened event %d",
+            msg.squawk, msg.icao_hex, callsign or "unknown", altitude_desc, distance_desc, event_id
+        )
+
+    def _close_emergency(self, icao_hex: str, reason: str) -> None:
+        """
+        Stop tracking an open emergency event, writing its final
+        last_ts/msg_count.
+
+        Args:
+            icao_hex: Lowercase ICAO hex address of the aircraft.
+            reason: Short human-readable reason, for the log line.
+        """
+        event = self.open_emergencies.pop(icao_hex)
+        update_emergency_event(self.conn, event.event_id, event.last_ts, event.msg_count)
+        logger.warning(
+            "Emergency event %d for %s (squawk %s) closed: %s - %d message(s), last heard %s",
+            event.event_id, icao_hex, event.squawk, reason, event.msg_count, event.last_ts
+        )
+
+    def _maintain_emergencies(self) -> None:
+        """
+        Flush-time housekeeping for emergency tracking: persist each open
+        event's running last_ts/msg_count, close events idle past
+        EMERGENCY_IDLE_TIMEOUT_SECONDS, and forget pending sightings not
+        repeated within EMERGENCY_PENDING_TIMEOUT_SECONDS.
+        """
+        now_monotonic = time.monotonic()
+
+        for icao_hex, event in list(self.open_emergencies.items()):
+            idle_seconds = now_monotonic - event.last_monotonic
+            if idle_seconds >= EMERGENCY_IDLE_TIMEOUT_SECONDS:
+                self._close_emergency(icao_hex, f"no squawk heard for {int(idle_seconds)} s")
+            else:
+                update_emergency_event(self.conn, event.event_id, event.last_ts, event.msg_count)
+
+        for icao_hex, pending in list(self.pending_emergencies.items()):
+            if now_monotonic - pending.last_monotonic >= EMERGENCY_PENDING_TIMEOUT_SECONDS:
+                del self.pending_emergencies[icao_hex]
+                logger.info(
+                    "Unconfirmed emergency squawk %s from %s expired after %d message(s)",
+                    pending.squawk, icao_hex, pending.msg_count
+                )
 
     def _poll_dump1090_message_delta(self) -> int:
         """
@@ -578,6 +819,11 @@ class IngestLoop:
 
     def flush(self) -> None:
         """Flush in-memory counters to database."""
+        # Runs before the nothing-to-flush check: an idle open event or
+        # stale pending sighting still needs closing out even in a period
+        # with no other activity.
+        self._maintain_emergencies()
+
         if self.msg_count_hour == 0 and not self.aircraft_updates:
             return  # Nothing to flush
 
@@ -664,11 +910,37 @@ class IngestLoop:
         now_wall = datetime.now(timezone.utc)
         for icao_hex, (altitude_ft, ts_str) in get_last_altitudes(self.conn).items():
             try:
-                recorded_at = datetime.strptime(ts_str, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+                recorded_at = datetime.strptime(ts_str, TIMESTAMP_FORMAT).replace(tzinfo=timezone.utc)
             except ValueError:
                 continue
             elapsed_seconds = (now_wall - recorded_at).total_seconds()
             self.last_altitude[icao_hex] = (altitude_ft, now_monotonic - elapsed_seconds, ts_str)
+
+    def _resume_open_emergencies(self) -> None:
+        """
+        Re-adopt emergency events still within EMERGENCY_IDLE_TIMEOUT_SECONDS
+        of their last update when the process last stopped, so a restart
+        mid-emergency extends the existing row instead of opening a second
+        one for the same event. Uses the same monotonic backdating as
+        _load_persisted_altitudes.
+        """
+        now_monotonic = time.monotonic()
+        now_wall = datetime.now(timezone.utc)
+        cutoff = (now_wall - timedelta(seconds=EMERGENCY_IDLE_TIMEOUT_SECONDS)).strftime(TIMESTAMP_FORMAT)
+        for event_id, icao_hex, squawk, last_ts, msg_count in get_recent_emergency_events(self.conn, cutoff):
+            try:
+                last_heard = datetime.strptime(last_ts, TIMESTAMP_FORMAT).replace(tzinfo=timezone.utc)
+            except ValueError:
+                continue
+            elapsed_seconds = (now_wall - last_heard).total_seconds()
+            self.open_emergencies[icao_hex] = OpenEmergency(
+                event_id=event_id, squawk=squawk, last_ts=last_ts,
+                last_monotonic=now_monotonic - elapsed_seconds, msg_count=msg_count
+            )
+            logger.info(
+                "Resumed open emergency event %d for %s (squawk %s, last heard %s)",
+                event_id, icao_hex, squawk, last_ts
+            )
 
     def run(self) -> None:
         """Connect to the SBS stream and process messages until interrupted."""
@@ -679,6 +951,7 @@ class IngestLoop:
         self.conn = get_connection(self.db_path)
         self.last_dump1090_msg_count = get_last_dump1090_msg_count(self.conn)
         self._load_persisted_altitudes()
+        self._resume_open_emergencies()
 
         now = datetime.now(timezone.utc)
         self.current_utc_date = now.strftime("%Y-%m-%d")

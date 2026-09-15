@@ -5,7 +5,7 @@ import sqlite3
 from pathlib import Path
 from typing import Optional
 
-VALID_EXPORT_TABLES = frozenset({"global_stats", "daily_stats", "hourly_stats"})
+VALID_EXPORT_TABLES = frozenset({"global_stats", "daily_stats", "hourly_stats", "emergency_events"})
 
 _READ_ONLY_PREFIXES = ("select", "with", "explain")
 
@@ -303,6 +303,109 @@ def batch_update_aircraft_last_altitude(conn: sqlite3.Connection,
             "UPDATE seen_aircraft SET last_altitude_ft = ?, last_altitude_ts = ? WHERE icao = ?",
             [(altitude_ft, ts, icao_hex) for icao_hex, altitude_ft, ts in altitudes]
         )
+
+
+def insert_emergency_event(conn: sqlite3.Connection, icao_hex: str, squawk: str,
+                           callsign: Optional[str], first_ts: str, last_ts: str,
+                           msg_count: int, altitude_ft: Optional[float],
+                           lat: Optional[float], lon: Optional[float],
+                           dist_nm: Optional[float]) -> int:
+    """
+    Insert a newly confirmed emergency squawk event.
+
+    One row per event (a contiguous stretch of one aircraft squawking one
+    emergency code), not per message. ingest.py owns the confirmation and
+    open/close logic; this only records the result.
+
+    Args:
+        conn: Open database connection.
+        icao_hex: Lowercase ICAO hex address.
+        squawk: The emergency code, e.g. "7700".
+        callsign: Callsign at confirmation time, or None if unknown.
+        first_ts: ISO timestamp of the first sighting of this code.
+        last_ts: ISO timestamp of the most recent sighting so far.
+        msg_count: Squawk messages seen so far for this event.
+        altitude_ft: Altitude at confirmation time, or None if unknown.
+        lat: Latitude at confirmation time, or None if unknown.
+        lon: Longitude at confirmation time, or None if unknown.
+        dist_nm: Distance from the receiver at confirmation time, or None.
+
+    Returns:
+        The new row's id, for update_emergency_event.
+    """
+    with conn:
+        cursor = conn.execute("""
+            INSERT INTO emergency_events (icao, squawk, callsign, first_ts, last_ts, msg_count,
+                                          altitude_ft, lat, lon, dist_nm)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (icao_hex, squawk, callsign, first_ts, last_ts, msg_count,
+              altitude_ft, lat, lon, dist_nm))
+        return cursor.lastrowid
+
+
+def update_emergency_event(conn: sqlite3.Connection, event_id: int,
+                           last_ts: str, msg_count: int) -> None:
+    """
+    Refresh an open emergency event's running last_ts/msg_count.
+
+    Args:
+        conn: Open database connection.
+        event_id: Row id returned by insert_emergency_event.
+        last_ts: ISO timestamp of the most recent sighting.
+        msg_count: Total squawk messages seen for this event so far.
+    """
+    with conn:
+        conn.execute(
+            "UPDATE emergency_events SET last_ts = ?, msg_count = ? WHERE id = ?",
+            (last_ts, msg_count, event_id)
+        )
+
+
+def get_recent_emergency_events(conn: sqlite3.Connection,
+                                since_ts: str) -> list[tuple[int, str, str, str, int]]:
+    """
+    Load emergency events last updated at or after a cutoff, so ingest.py
+    can resume ones still open when the process last stopped.
+
+    Args:
+        conn: Open database connection.
+        since_ts: ISO timestamp cutoff (inclusive). Plain string comparison
+            is correct because every timestamp uses the same fixed format.
+
+    Returns:
+        (id, icao, squawk, last_ts, msg_count) tuples ordered by last_ts
+        ascending, so a caller keying on icao ends up holding the latest.
+    """
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT id, icao, squawk, last_ts, msg_count FROM emergency_events "
+        "WHERE last_ts >= ? ORDER BY last_ts",
+        (since_ts,)
+    )
+    return cursor.fetchall()
+
+
+def get_emergency_summary(conn: sqlite3.Connection) -> tuple[int, Optional[tuple[str, str, str, Optional[str]]]]:
+    """
+    Summarize the emergency_events table for the `status` command.
+
+    Args:
+        conn: Open database connection.
+
+    Returns:
+        (total_events, latest) where latest is (first_ts, icao, squawk,
+        callsign) for the most recently opened event, or None if there
+        are no events.
+    """
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM emergency_events")
+    total_events = cursor.fetchone()[0]
+    cursor.execute(
+        "SELECT first_ts, icao, squawk, callsign FROM emergency_events "
+        "ORDER BY first_ts DESC, id DESC LIMIT 1"
+    )
+    latest = cursor.fetchone()
+    return total_events, latest
 
 
 def try_insert_flight(conn: sqlite3.Connection, icao_hex: str, callsign: str) -> bool:

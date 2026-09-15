@@ -35,8 +35,21 @@ Rather than branch on transmission type, fields are treated as present
 whenever they parse to a non-empty value - simpler and more robust than a
 type-number lookup table, since SBS already self-describes which fields
 apply to a given line via which ones are empty.
+
+Field 17's format and field 19's meaning come from dump1090-fa's own SBS
+writer (net_io.c, modesSendSBSOutput - note that its comments number
+fields from 1, so what it calls "Field 18" is field 17 here). The squawk
+is written as the code's four octal digits, zero-padded to four
+characters. The emergency flag is not an independent signal: dump1090-fa
+sets it to -1 exactly when that same squawk is 7500, 7600, or 7700, and
+to 0 otherwise. That is why only the squawk itself is parsed here - the
+flag cannot say anything the squawk value does not already say. Type 6
+lines have not yet been observed live from this station's dump1090-fa;
+the squawk handling is based on the writer's source rather than captured
+output.
 """
 
+import re
 from typing import NamedTuple, Optional
 
 FIELD_ICAO = 4
@@ -45,6 +58,7 @@ FIELD_ALTITUDE = 11
 FIELD_LAT = 14
 FIELD_LON = 15
 FIELD_VERTICAL_RATE = 16
+FIELD_SQUAWK = 17
 MIN_FIELDS = 22
 
 # Physically-plausible bounds for a genuine barometric altitude reading.
@@ -70,6 +84,19 @@ MAX_ALTITUDE_FT = 50175
 MIN_VERTICAL_RATE_FPM = -12000
 MAX_VERTICAL_RATE_FPM = 12000
 
+# A Mode A squawk is four octal digits, and dump1090-fa always emits it
+# zero-padded to four characters. Anything else in the field (a garbled
+# decode that still passed CRC, or an unexpected format) is treated as
+# absent rather than passed through: a squawk only matters here for
+# spotting the emergency codes below, and a mangled one is worthless for
+# that.
+SQUAWK_RE = re.compile(r"^[0-7]{4}$")
+
+# The three Mode A codes reserved for emergencies: 7500 (unlawful
+# interference), 7600 (radio failure), 7700 (general emergency). This is
+# the same set dump1090-fa itself tests to set SBS field 19.
+EMERGENCY_SQUAWKS = frozenset({"7500", "7600", "7700"})
+
 
 class SBSMessage(NamedTuple):
     """Fields extracted from one SBS "MSG" line."""
@@ -79,8 +106,10 @@ class SBSMessage(NamedTuple):
     lat: Optional[float] = None
     lon: Optional[float] = None
     vertical_rate_fpm: Optional[int] = None
+    squawk: Optional[str] = None  # four octal digits, e.g. "1200"
     is_ident: bool = False
     is_position: bool = False
+    is_emergency: bool = False    # squawk is one of EMERGENCY_SQUAWKS
 
 
 def parse_sbs_line(line: str) -> Optional[SBSMessage]:
@@ -136,6 +165,11 @@ def parse_sbs_line(line: str) -> Optional[SBSMessage]:
         except ValueError:
             pass
 
+    squawk = None
+    raw_squawk = fields[FIELD_SQUAWK].strip()
+    if SQUAWK_RE.match(raw_squawk):
+        squawk = raw_squawk
+
     return SBSMessage(
         icao_hex=icao_hex,
         callsign=callsign,
@@ -143,6 +177,8 @@ def parse_sbs_line(line: str) -> Optional[SBSMessage]:
         lat=lat,
         lon=lon,
         vertical_rate_fpm=vertical_rate_fpm,
+        squawk=squawk,
         is_ident=callsign is not None,
         is_position=lat is not None,
+        is_emergency=squawk in EMERGENCY_SQUAWKS,
     )

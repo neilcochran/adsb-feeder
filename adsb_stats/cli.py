@@ -12,6 +12,7 @@ from .config import load_config, save_config, DEFAULT_CONFIG_PATH
 from .db import (
     init_db, get_connection, get_global_stats, get_table_rows,
     export_table_to_csv, export_table_to_json, run_query, run_maintenance_sql,
+    get_emergency_summary,
 )
 from .ingest import IngestLoop
 from .queries import QUERIES_DIR, list_saved_queries, load_saved_query
@@ -20,6 +21,7 @@ TABLE_MAP = {
     "global": "global_stats",
     "daily": "daily_stats",
     "hourly": "hourly_stats",
+    "emergencies": "emergency_events",
 }
 
 
@@ -80,6 +82,7 @@ def cmd_status(args: argparse.Namespace) -> None:
     conn = get_connection(config["db_path"])
     try:
         stats = get_global_stats(conn)
+        emergency_count, latest_emergency = get_emergency_summary(conn)
     finally:
         conn.close()
 
@@ -115,6 +118,13 @@ def cmd_status(args: argparse.Namespace) -> None:
             print(f"  Aircraft: {stats['dist_max_icao'].upper()}")
         if stats["dist_max_ts"]:
             print(f"  Time: {stats['dist_max_ts']}")
+
+    print("\nEmergency Squawks:")
+    print(f"  Events recorded: {emergency_count:,}")
+    if latest_emergency:
+        first_ts, icao, squawk, callsign = latest_emergency
+        aircraft = f"{icao.upper()} ({callsign})" if callsign else icao.upper()
+        print(f"  Most recent: {squawk} from {aircraft} at {first_ts}")
 
     print(f"\nFirst Message: {stats['first_msg_ts'] or 'N/A'}")
     print(f"Last Message: {stats['last_msg_ts'] or 'N/A'}")
@@ -289,7 +299,7 @@ def main() -> None:
     export_parser = subparsers.add_parser("export", help="Export statistics")
     export_parser.add_argument("--config", "-c", help="Config file path")
     export_parser.add_argument("--table", "-t", required=True,
-                              choices=["global", "daily", "hourly"],
+                              choices=["global", "daily", "hourly", "emergencies"],
                               help="Table to export")
     export_parser.add_argument("--format", "-f", default="csv",
                               choices=["csv", "json"],

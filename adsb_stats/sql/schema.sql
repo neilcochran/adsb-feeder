@@ -77,3 +77,33 @@ CREATE TABLE IF NOT EXISTS seen_today (
   callsign   TEXT NOT NULL,
   PRIMARY KEY (icao, callsign)
 );
+
+-- One row per confirmed emergency squawk event: a contiguous stretch of a
+-- single aircraft squawking one of the reserved emergency codes (7500,
+-- 7600, 7700). Unlike the tables above this is an event log, not a period
+-- aggregate - a genuine emergency is rare enough, and interesting enough,
+-- that collapsing it into a count would throw away the only detail worth
+-- keeping. ingest.py decides when a sighting is confirmed (a single Mode A
+-- reply can catch a transponder being dialed through an emergency code on
+-- its way to another) and when an event ends - see its EMERGENCY_*
+-- constants. callsign/altitude_ft/lat/lon/dist_nm are a snapshot taken
+-- from aircraft.json at confirmation time (the SBS lines that carry a
+-- squawk carry nothing else useful), NULL where dump1090-fa had no
+-- current value.
+CREATE TABLE IF NOT EXISTS emergency_events (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  icao         TEXT NOT NULL,
+  squawk       TEXT NOT NULL,   -- "7500" / "7600" / "7700"
+  callsign     TEXT,
+  first_ts     TEXT NOT NULL,   -- first sighting of the code (ISO UTC)
+  last_ts      TEXT NOT NULL,   -- most recent sighting (ISO UTC)
+  msg_count    INTEGER NOT NULL DEFAULT 0,
+  altitude_ft  REAL,
+  lat          REAL,
+  lon          REAL,
+  dist_nm      REAL
+);
+
+-- Supports ingest.py's startup query for events still open when the
+-- process last stopped.
+CREATE INDEX IF NOT EXISTS idx_emergency_events_last_ts ON emergency_events (last_ts);
