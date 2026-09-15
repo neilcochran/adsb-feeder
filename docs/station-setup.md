@@ -107,10 +107,31 @@ FR24's contributor agreement.
 
 **File:** `/etc/default/dump1090-fa`
 
-Key settings:
+Two config formats exist, distinguished by the `CONFIG_STYLE` value at the
+bottom of the file. Check which one the device has before editing.
+
+**Older style (no `CONFIG_STYLE` line)** - a single options string:
 
 - `RECEIVER_OPTIONS="--device-type rtlsdr --gain 40"`
 - Gain can be adjusted. Use `--gain -10` for auto-gain.
+
+**`CONFIG_STYLE=6` (dump1090-fa 11.x)** - discrete variables, no options
+string:
+
+- `RECEIVER=rtlsdr` selects the SDR type; `RECEIVER_GAIN` sets gain in dB.
+  A value above the tuner's ceiling (58.6 dB on the R820T) clamps to
+  maximum.
+- `ADAPTIVE_DYNAMIC_RANGE=yes` enables adaptive gain control, which tracks
+  a target dynamic range rather than holding gain fixed. This is the
+  preferred setting for the mobile unit, which sees a different RF
+  environment on every use. Startup logs confirm it with `adaptive: enabled
+  adaptive gain control with gain limits ...`.
+- `RECEIVER_LAT` / `RECEIVER_LON` set the receiver position. On the
+  stationary unit `piaware-config` manages this instead; on a receive-only
+  unit with no piaware, this file is the only place to set it. Left empty,
+  distance and bearing are unavailable, positions decode via global CPR
+  only, and `MAX_RANGE` has no effect - the range check is gated on a valid
+  receiver position.
 
 ### PiAware
 
@@ -174,6 +195,7 @@ sudo apt install -y \
     git build-essential debhelper \
     libusb-1.0-0-dev libncurses-dev \
     pkg-config librtlsdr-dev \
+    libbladerf-dev libhackrf-dev liblimesuite-dev libsoapysdr-dev \
     lighttpd adduser lsb-release
 ```
 
@@ -194,10 +216,31 @@ sudo dpkg -i dump1090-fa_*.deb
 sudo systemctl enable --now dump1090-fa
 ```
 
-> **Note:** If `dpkg-buildpackage` complains about missing optional SDR
-> frontend libraries (`libbladerf-dev`, `libhackrf-dev`, `liblimesuite-dev`,
-> `libsoapysdr-dev`), install them if available or bypass with the `-d` flag:
-> `dpkg-buildpackage -b --no-sign -d`
+> **Note:** The four SDR frontend libraries (`libbladerf-dev`,
+> `libhackrf-dev`, `liblimesuite-dev`, `libsoapysdr-dev`) are declared build
+> dependencies, not optional ones - `dpkg-buildpackage` aborts without them.
+> They are included in Step 2. The `-d` flag skips the dependency check but
+> does not change what gets compiled, so it only moves the failure later.
+
+> **Note:** If the service fails on startup with `rtlsdr: error querying
+> device #0: Permission denied`, udev never applied its rules to the dongle.
+> The rules at `/lib/udev/rules.d/60-librtlsdr0.rules` set the device node to
+> group `plugdev`, but udev applies rules only on a device add event - so a
+> dongle that enumerated at boot, before librtlsdr was installed in Step 2,
+> keeps default `root:root` permissions. The `dump1090` service account is
+> already in `plugdev`, so no group change is needed; replay the rules:
+>
+> ```bash
+> sudo udevadm control --reload-rules
+> sudo udevadm trigger --attr-match=idVendor=0bda --action=add
+> sudo systemctl restart dump1090-fa
+> ```
+>
+> A reboot or physically replugging the dongle does the same thing. This is
+> a one-time install-ordering problem; later boots apply the rules normally.
+> The symptom is misleading: the SkyAware map on port 8080 loads normally,
+> because lighttpd serves it independently of the decoder, but it never
+> shows aircraft.
 
 ### Step 4: Install tcl-tls (PiAware Dependency)
 
