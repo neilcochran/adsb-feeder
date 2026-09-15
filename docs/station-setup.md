@@ -411,6 +411,30 @@ See [`../adsb_stats/README.md`](../adsb_stats/README.md) and
 [`../monitor/README.md`](../monitor/README.md) for configuration and
 troubleshooting.
 
+### Step 9: Install adsbtop
+
+[`@squawk/adsbtop`](https://www.npmjs.com/package/@squawk/adsbtop) is a
+terminal dashboard of the aircraft dump1090-fa is currently tracking. It
+needs Node.js 22 or newer. Debian's `nodejs` package is too old and
+`dietpi-software` picks whichever release has the highest version number
+rather than an LTS one, so install a pinned version with the
+[nodejs-linux-installer](https://github.com/MichaIng/nodejs-linux-installer)
+script instead. Node 22 is the last line with official armv7l builds.
+
+```bash
+cd ~
+wget -qO node-install.sh https://raw.githubusercontent.com/MichaIng/nodejs-linux-installer/master/node-install.sh
+sudo bash node-install.sh -v v22.23.2
+sudo npm install -g @squawk/adsbtop
+```
+
+Its defaults connect to dump1090-fa's SBS output on this machine, so no
+flags are needed:
+
+```bash
+adsbtop
+```
+
 ## Useful Commands
 
 ### FlightAware
