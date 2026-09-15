@@ -87,7 +87,14 @@ EMERGENCY_CONFIRM_SECONDS = 5
 
 # A pending (not yet confirmed) emergency sighting is forgotten if the
 # code isn't seen again within this long - see _maintain_emergencies.
-EMERGENCY_PENDING_TIMEOUT_SECONDS = 60
+# Squawk-bearing SBS lines are sparse: a live 60 s capture at this station
+# showed roughly one per aircraft every 45 s, so a genuine emergency's
+# second message can easily arrive more than a minute after its first.
+# The window has to comfortably outlast that gap or a real event would
+# keep expiring before it could confirm. A non-emergency squawk from the
+# same aircraft still clears a pending sighting immediately, so the
+# longer window doesn't weaken the dial-through defense.
+EMERGENCY_PENDING_TIMEOUT_SECONDS = 300
 
 # An open event is closed as soon as the aircraft reports a different
 # squawk, or once nothing has been heard from it for this long (checked

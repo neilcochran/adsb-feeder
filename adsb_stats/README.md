@@ -341,7 +341,11 @@ identical to the real thing. An event is only opened once the same
 aircraft has repeated the same code at least twice across at least five
 seconds. A genuine emergency code stays set for minutes at the very
 least, so it clears that bar within seconds; a code dialed through in
-passing does not, and is dropped after a minute without a repeat.
+passing does not, and is dropped after five minutes without a repeat.
+That window is deliberately generous because squawk-bearing SBS lines
+are sparse (on the order of one per aircraft every 45 seconds at this
+station), so the second message can arrive well over a minute after the
+first.
 
 Once confirmed, the event row is written immediately (not held for the
 next flush - these are rare and worth not losing to a crash) with a
