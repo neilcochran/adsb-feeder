@@ -230,8 +230,8 @@ you edit the "wrong" config file, the service won't see the change.
   "sbs_port": 30003,
   "aircraft_json_path": "/run/dump1090-fa/aircraft.json",
   "db_path": "/var/lib/adsb-stats/stats.db",
-  "receiver_lat": 43.6666,
-  "receiver_lon": -70.36367,
+  "receiver_lat": 40.6413,
+  "receiver_lon": -73.7781,
   "flush_interval_seconds": 300,
   "log_level": "INFO"
 }

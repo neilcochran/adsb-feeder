@@ -29,29 +29,13 @@ cd ~/adsb-feeder
 ls monitor/cli.py
 ```
 
-### Verify External Tools
-
-```bash
-# iwgetid (preferred for SSID lookup)
-which iwgetid
-
-# iw (fallback for SSID lookup)
-which iw
-
-# systemctl (for feeder service status)
-which systemctl
-```
-
-If `iwgetid` is missing:
+`iwgetid` (from `wireless-tools`) is not present on a fresh DietPi
+install; the station setup guide's dependency step installs it. Without
+it, and without `iw` as a fallback, the network section shows the SSID as
+`N/A`:
 
 ```bash
 sudo apt install -y wireless-tools
-```
-
-If `iw` is missing:
-
-```bash
-sudo apt install -y iw
 ```
 
 ## Usage
@@ -192,7 +176,7 @@ Unknown section IDs are silently skipped.
 | `temperatures` | All thermal zone readings with threshold-based color coding (red > 80°C, yellow > 65°C, green otherwise). Set `options.temp_simple` to `true` for a single averaged line instead |
 | `cpu_freq` | Per-core clock speeds with big.LITTLE cluster labels (A7 LITTLE cores 0–3, A15 big cores 4–7) |
 | `fan` | Fan PWM duty cycle and control mode (from `/sys/class/hwmon/hwmon0/`) |
-| `feeder_services` | Status of all five feeder services via `systemctl is-active`, including crash/retry detection via `NRestarts` and age since last restart. Does not include the `adsb-stats` collector service - see `adsb_health` |
+| `feeder_services` | Status of all six feeder services via `systemctl is-active`, including crash/retry detection via `NRestarts` and age since last restart. Does not include the `adsb-stats` collector service - see `adsb_health` |
 | `adsb_live` | Live snapshot of tracked aircraft, position count, and messages/sec (parsed from `dump1090-fa`'s `/run/dump1090-fa/aircraft.json`) |
 | `adsb_global` | All-time totals from the `adsb-stats` collector's database: message count, unique aircraft/flights, max altitude/distance (with age) |
 | `adsb_health` | `adsb-stats` service status via `systemctl is-active`, data freshness (age of the last processed message), and error count with the most recent error's age and message |
@@ -200,13 +184,14 @@ Unknown section IDs are silently skipped.
 
 ### Monitored Services
 
-The `feeder_services` section tracks these five systemd units:
+The `feeder_services` section tracks these six systemd units:
 
 1. `dump1090-fa`
 2. `piaware`
 3. `fr24feed`
 4. `adsbexchange-feed`
 5. `adsbexchange-mlat`
+6. `adsbexchange-stats`
 
 A retry indicator appears when `NRestarts > 0` and the service's last
 restart falls within `options.retry_lookback_days` (default 7 days) - older
