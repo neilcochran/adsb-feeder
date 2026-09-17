@@ -1,4 +1,4 @@
-# Station Setup — Odroid-XU4 / DietPi
+# Station Setup - Odroid-XU4 / DietPi
 
 Full build, configuration, and operations runbook for the physical station.
 See [../README.md](../README.md) for a repo overview.
@@ -27,7 +27,7 @@ will differ from this example.
 ## Architecture
 
 ```
-RTL-SDR Dongle → dump1090-fa (port 30005 Beast, 30002 AVR, 8080 web)
+RTL-SDR Dongle -> dump1090-fa (port 30005 Beast, 30002 AVR, 8080 web)
                        |
         +--------------+------------------+
         |              |                  |
@@ -434,6 +434,63 @@ flags are needed:
 ```bash
 adsbtop
 ```
+
+### Optional: Continuous Clock Sync with chrony
+
+Only do this if the clock is actually drifting. DietPi's default time sync
+(`CONFIG_NTP_MODE=2` in `/boot/dietpi.txt`) runs `systemd-timesyncd` once
+at boot and once a day and leaves the clock free-running in between. Most
+boards keep good enough time for that to be fine. The catch is that the
+brief daily run can leave a large frequency correction behind in the
+kernel, up to the kernel's 500 ppm limit, with nothing left running to
+revise it. The clock then runs at that rate for the next 24 hours,
+accumulating tens of seconds of error, and the next daily sync applies
+all of it as one large step.
+
+The usual symptom is piaware being killed by its systemd watchdog shortly
+after the daily sync: piaware pings the watchdog every 96 seconds on a
+wall-clock timer while systemd enforces its 120 second limit on the
+monotonic clock, so a backward step of more than about 24 seconds delays
+the ping past the limit. The journal shows `Watchdog timeout (limit
+2min)!` followed by a scheduled restart. mlat-client reporting `clock
+unstable` is another sign.
+
+Confirm before changing anything:
+
+```bash
+grep CONFIG_NTP_MODE /boot/dietpi.txt
+sudo journalctl -u systemd-timesyncd --no-pager | tail -20
+sudo journalctl -u piaware --since "-2d" --no-pager | grep -iE "clock|reconnect|restart"
+```
+
+A step shows up in the timesyncd log as a `Contacted time server` line
+whose timestamp is out of order with the `Started` line just before it.
+If those corrections line up with the piaware events, replace timesyncd
+with chrony, which stays running and slews the clock continuously
+instead of stepping it once a day. Switch DietPi's time sync mode to
+custom (0) first so its boot and daily jobs stop expecting
+`systemd-timesyncd`, then install chrony. Installing chrony removes
+`systemd-timesyncd`; the two packages conflict because both provide
+`time-daemon`.
+
+```bash
+sudo /boot/dietpi/func/dietpi-set_software ntpd-mode 0
+sudo apt install -y chrony
+```
+
+Debian's default `/etc/chrony/chrony.conf` needs no changes. Verify it is
+tracking a source:
+
+```bash
+chronyc tracking
+chronyc sources
+```
+
+The `Frequency` line in the first run of `chronyc tracking`, before
+chrony has synchronised, is the correction it inherited from the kernel.
+A value at or near 500 ppm confirms the problem above. Within a few
+minutes it is replaced by chrony's own estimate of the board's real
+drift, typically a few ppm, and `Leap status` reads `Normal`.
 
 ## Useful Commands
 
