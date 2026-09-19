@@ -46,19 +46,19 @@ All services are enabled at boot via `systemctl enable`.
   `adsbexchange-stats`, `generate-pirehose-cert`.
 
 - **Owned by this repo**:
-  `adsb-stats.service` — install via `install.sh`.
+  `adsb-stats.service` - install via `install.sh`.
 
 ## Dependency Chain
 
 ```
 network-online.target
-    └── dump1090-fa
-            ├── piaware           (After=dump1090-fa)
-            ├── fr24feed          (After=network-online.target; reads AVR port 30002)
-            ├── adsbexchange-feed  (After=network.target; reads Beast port 30005)
-            ├── adsbexchange-mlat  (After=network.target; reads Beast port 30005)
-            ├── adsbexchange-stats (no ordering; reports feed status to ADSBX)
-            └── adsb-stats        (After=dump1090-fa; reads SBS port 30003)
+    `-- dump1090-fa
+            |-- piaware           (After=dump1090-fa)
+            |-- fr24feed          (After=network-online.target; reads AVR port 30002)
+            |-- adsbexchange-feed  (After=network.target; reads Beast port 30005)
+            |-- adsbexchange-mlat  (After=network.target; reads Beast port 30005)
+            |-- adsbexchange-stats (no ordering; reports feed status to ADSBX)
+            `-- adsb-stats        (After=dump1090-fa; reads SBS port 30003)
 ```
 
 `adsb-stats` uses `Wants=dump1090-fa.service` (not `Requires=`) so that a

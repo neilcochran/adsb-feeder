@@ -118,7 +118,7 @@ def render_network(wifi: WifiState, upload: UploadTracker, interval: int) -> lis
 
     wifi.last_state = operstate
 
-    # Upload rate — no coloring (low upload is normal during low traffic)
+    # Upload rate - no coloring (low upload is normal during low traffic)
     rate_str, total_str = upload.sample(interval)
     if rate_str not in ("collecting...", "(tx stats unavailable)"):
         lines.append(f"  Upload: {rate_str} (TX: {total_str})")

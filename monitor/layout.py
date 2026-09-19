@@ -23,7 +23,7 @@ from .sections_system import (
 from .style import SECTION_GAP, pad_right
 from .trackers import MessageRateTracker, UploadTracker, WifiState
 
-# Map of section identifier → render function. Most take no arguments;
+# Map of section identifier -> render function. Most take no arguments;
 # "network", "adsb_live", "feeder_services", the two adsb_stats sections,
 # and "temperatures" need runtime state instead (wifi/upload/interval,
 # msg_rate/interval, retry_lookback_days/retry_thresholds_days, db_path,

@@ -1,11 +1,11 @@
-# ADS-B System Monitor — Installation & Configuration Guide
+# ADS-B System Monitor - Installation & Configuration Guide
 
 ## Overview
 
 `monitor` is a real-time terminal dashboard for Odroid-XU4 / DietPi
 ADS-B feeder stations. It reads system metrics from sysfs and `/proc`,
 queries `systemctl` for feeder service status, and parses `dump1090-fa`'s
-live `aircraft.json` to display aircraft tracking statistics — all in a
+live `aircraft.json` to display aircraft tracking statistics - all in a
 configurable single or dual-column terminal layout.
 
 ## Requirements
@@ -68,7 +68,7 @@ python3 -m monitor.cli -i 1
 ### Headless / Remote Usage
 
 The script works over SSH. Ensure your terminal supports ANSI colors and has
-sufficient width (recommended ≥ 100 columns for the 2-column layout).
+sufficient width (recommended >= 100 columns for the 2-column layout).
 
 ### Stopping
 
@@ -118,7 +118,7 @@ If none are found, a default config is auto-created at
 
 The repo ships with two example configs in `monitor/configs/`:
 
-**`stationary.json`** — 2-column layout for the 24/7 stationary box, including
+**`stationary.json`** - 2-column layout for the 24/7 stationary box, including
 the adsb-stats collector sections (`adsb_global`/`adsb_health`):
 
 ```json
@@ -135,7 +135,7 @@ the adsb-stats collector sections (`adsb_global`/`adsb_health`):
 }
 ```
 
-**`config.json`** — Second example config; 2-column layout with `fan` and
+**`config.json`** - Second example config; 2-column layout with `fan` and
 `cpu_freq`, also including the adsb-stats collector sections:
 
 ```json
@@ -174,7 +174,7 @@ Unknown section IDs are silently skipped.
 | `cpu_usage` | Overall CPU utilisation percentage and load average (from `/proc/stat` and `/proc/loadavg`) |
 | `memory` | RAM and Swap usage with color-coded percentages (from `/proc/meminfo`) |
 | `temperatures` | All thermal zone readings with threshold-based color coding (red > 80°C, yellow > 65°C, green otherwise). Set `options.temp_simple` to `true` for a single averaged line instead |
-| `cpu_freq` | Per-core clock speeds with big.LITTLE cluster labels (A7 LITTLE cores 0–3, A15 big cores 4–7) |
+| `cpu_freq` | Per-core clock speeds with big.LITTLE cluster labels (A7 LITTLE cores 0-3, A15 big cores 4-7) |
 | `fan` | Fan PWM duty cycle and control mode (from `/sys/class/hwmon/hwmon0/`) |
 | `feeder_services` | Status of all six feeder services via `systemctl is-active`, including crash/retry detection via `NRestarts` and age since last restart. Does not include the `adsb-stats` collector service - see `adsb_health` |
 | `adsb_live` | Live snapshot of tracked aircraft, position count, and messages/sec (parsed from `dump1090-fa`'s `/run/dump1090-fa/aircraft.json`) |
