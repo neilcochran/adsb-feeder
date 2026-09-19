@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# install.sh — Deploy the adsb-stats systemd service and verify the
+# install.sh - Deploy the adsb-stats systemd service and verify the
 #              full feeder service set.
 #
 # Usage:  sudo bash systemd/install.sh
@@ -24,7 +24,7 @@ CONFIG_DIR="/etc/adsb-stats"
 DB_FILE="${DATA_DIR}/stats.db"
 CONFIG_FILE="${CONFIG_DIR}/config.json"
 
-# ── 1. Dedicated user ──────────────────────────────────────────
+# -- 1. Dedicated user ------------------------------------------
 if ! id adsbstats &>/dev/null; then
     echo "[install] Creating system user 'adsbstats'"
     useradd --system \
@@ -33,10 +33,10 @@ if ! id adsbstats &>/dev/null; then
         --comment "ADS-B Statistics Collector" \
         adsbstats
 else
-    echo "[install] User 'adsbstats' already exists — skipping"
+    echo "[install] User 'adsbstats' already exists - skipping"
 fi
 
-# ── 2. Directories ────────────────────────────────────────────
+# -- 2. Directories --------------------------------------------
 for dir in "$TARGET_DIR" "$DATA_DIR" "$CONFIG_DIR"; do
     if [[ ! -d "$dir" ]]; then
         echo "[install] Creating $dir"
@@ -52,9 +52,9 @@ chmod 755 "$TARGET_DIR"
 # (see the "adsbstats group" step printed at the end of this script).
 chmod 750 "$DATA_DIR"
 
-# ── 3. Install code ───────────────────────────────────────────
+# -- 3. Install code -------------------------------------------
 if [[ -d "$REPO_ROOT/adsb_stats" ]]; then
-    echo "[install] Copying repo → $TARGET_DIR/"
+    echo "[install] Copying repo -> $TARGET_DIR/"
     rsync -a --delete "$REPO_ROOT/" "$TARGET_DIR/"
     chown -R root:root "$TARGET_DIR"
     # adsbstats needs read access to the package
@@ -66,7 +66,7 @@ else
     echo "[install]         will fail to start until the code is present."
 fi
 
-# ── 4. Default config (only if not already present) ──────────
+# -- 4. Default config (only if not already present) ----------
 if [[ ! -f "$CONFIG_FILE" ]]; then
     echo "[install] Creating default config at $CONFIG_FILE"
     cat > "$CONFIG_FILE" <<'JSON'
@@ -86,10 +86,10 @@ JSON
     echo "[install] Edit $CONFIG_FILE to set receiver_lat/receiver_lon"
     echo "[install]           for distance tracking on the stationary unit."
 else
-    echo "[install] Config already exists at $CONFIG_FILE — skipping"
+    echo "[install] Config already exists at $CONFIG_FILE - skipping"
 fi
 
-# ── 5. Initialize (or migrate) the database ──────────────────
+# -- 5. Initialize (or migrate) the database ------------------
 # Always run `init`, even for a pre-existing database: init_db()/
 # _migrate_schema() are required to be safe to re-run (see schema.sql's
 # header comment) - this is what applies newly-added columns to an
@@ -98,29 +98,29 @@ fi
 if [[ ! -f "$DB_FILE" ]]; then
     echo "[install] Initializing database"
 else
-    echo "[install] Database already exists at $DB_FILE — checking for schema updates"
+    echo "[install] Database already exists at $DB_FILE - checking for schema updates"
 fi
 su -s /bin/bash adsbstats -c \
     "cd $TARGET_DIR && python3 -m adsb_stats.cli init --config $CONFIG_FILE"
 chown adsbstats:adsbstats "$DB_FILE"
 chmod 640 "$DB_FILE"
 
-# ── 6. Install systemd unit ──────────────────────────────────
+# -- 6. Install systemd unit ----------------------------------
 echo "[install] Installing $SERVICE_FILE"
 cp "$REPO_ROOT/systemd/$SERVICE_FILE" /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable adsb-stats
 
-# ── 7. Install CLI wrapper ────────────────────────────────────
+# -- 7. Install CLI wrapper ------------------------------------
 if [[ -f "$REPO_ROOT/bin/adsb-stats" ]]; then
     echo "[install] Linking adsb-stats CLI wrapper to /usr/local/bin/"
     chmod +x "$TARGET_DIR/bin/adsb-stats"
     ln -sf "$TARGET_DIR/bin/adsb-stats" /usr/local/bin/adsb-stats
 fi
 
-# ── 8. Verify full service set ───────────────────────────────
+# -- 8. Verify full service set -------------------------------
 echo ""
-echo "── Service Verification ───────────────────────────────────"
+echo "-- Service Verification -----------------------------------"
 
 EXPECTED_SERVICES=(
     dump1090-fa
@@ -140,7 +140,7 @@ for svc in "${EXPECTED_SERVICES[@]}"; do
         enabled=$(systemctl is-enabled "$svc" 2>/dev/null || true)
         printf "  %-25s  active: %-10s  enabled: %s\n" "$svc" "$state" "$enabled"
     else
-        printf "  %-25s  (not installed — OK on mobile unit)\n" "$svc"
+        printf "  %-25s  (not installed - OK on mobile unit)\n" "$svc"
     fi
 done
 

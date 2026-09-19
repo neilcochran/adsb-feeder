@@ -1,4 +1,4 @@
-# adsb-stats.service — ADS-B Statistics Collector
+# adsb-stats.service - ADS-B Statistics Collector
 #
 # Installs to /etc/systemd/system/adsb-stats.service
 # Code expected at /opt/adsb-feeder/ (the adsb_stats/ package)
@@ -14,7 +14,7 @@
 
 [Unit]
 Description=ADS-B Statistics Collector (SBS stream -> SQLite)
-Documentation=https://github.com/neilcochran/adsb-feeder/blob/main/systemd/README.md
+Documentation=https://github.com/neilcochran/adsb-feeder/blob/master/systemd/README.md
 After=dump1090-fa.service network-online.target
 Wants=dump1090-fa.service
 

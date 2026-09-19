@@ -1,5 +1,5 @@
 """
-Odroid-XU4 / DietPi — ADS-B Feeder Dashboard
+Odroid-XU4 / DietPi - ADS-B Feeder Dashboard
 
 Real-time system monitoring for ADS-B feeder stations.
 Displays uptime, temperatures, CPU usage, fan PWM, memory, feeder service
@@ -41,7 +41,7 @@ def parse_args() -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
         prog="adsb-monitor",
-        description="Odroid-XU4 / DietPi — ADS-B Feeder Dashboard",
+        description="Odroid-XU4 / DietPi - ADS-B Feeder Dashboard",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
