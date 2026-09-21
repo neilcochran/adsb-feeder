@@ -41,8 +41,9 @@ RTL-SDR Dongle -> dump1090-fa (port 30005 Beast, 30002 AVR, 8080 web)
 |---|---|---|
 | 30002 | AVR (raw) | fr24feed |
 | 30003 | SBS (BaseStation) | adsb-stats |
-| 30005 | Beast | piaware, adsbexchange-feed |
+| 30005 | Beast | piaware, adsbexchange-feed, adsbexchange-mlat, adsbscope |
 | 8080 | HTTP | dump1090-fa web map (SkyAware) |
+| 8090 | HTTP | adsbscope live traffic view |
 | 8754 | HTTP | fr24feed web UI |
 
 ## Services
@@ -77,16 +78,22 @@ All services are enabled at boot via `systemctl enable`.
 |---|---|
 | `adsb-stats` | Collects aggregate ADS-B statistics from dump1090-fa (this repo's own tooling, not a feeder) |
 
+### Live Traffic View
+
+| Service | Purpose |
+|---|---|
+| `adsbscope` | Serves a browser view of the aircraft dump1090-fa is tracking (separate npm package; this repo owns only its unit file) |
+
 ### Check All Services
 
 ```bash
-systemctl status dump1090-fa piaware generate-pirehose-cert fr24feed adsbexchange-feed adsbexchange-mlat adsbexchange-stats adsb-stats
+systemctl status dump1090-fa piaware generate-pirehose-cert fr24feed adsbexchange-feed adsbexchange-mlat adsbexchange-stats adsb-stats adsbscope
 ```
 
 ### Check If Enabled At Boot
 
 ```bash
-systemctl is-enabled dump1090-fa piaware generate-pirehose-cert fr24feed adsbexchange-feed adsbexchange-mlat adsbexchange-stats adsb-stats
+systemctl is-enabled dump1090-fa piaware generate-pirehose-cert fr24feed adsbexchange-feed adsbexchange-mlat adsbexchange-stats adsb-stats adsbscope
 ```
 
 ## MLAT Configuration
@@ -435,6 +442,32 @@ flags are needed:
 adsbtop
 ```
 
+### Step 10: Install adsbscope
+
+[`@squawk/adsbscope`](https://www.npmjs.com/package/@squawk/adsbscope)
+serves the same traffic as a map in the browser instead of the terminal. It
+reads dump1090-fa's Beast output and needs the Node.js installed in Step 9.
+
+```bash
+sudo npm install -g @squawk/adsbscope
+```
+
+Binding to `0.0.0.0` makes the view reachable from the LAN rather than only
+from the board itself:
+
+```bash
+adsbscope --host localhost --bind 0.0.0.0 --lat <latitude> --lon <longitude>
+```
+
+Anyone who can reach that address can see the traffic and the receiver
+position, so only bind beyond loopback on a network you control.
+
+That command dies with the shell that started it. To keep the view running
+across logouts and reboots, install `adsbscope.service` instead - see
+[`../systemd/README.md`](../systemd/README.md), which also covers the
+dedicated service user and the environment file holding the receiver
+position.
+
 ### Optional: Continuous Clock Sync with chrony
 
 Only do this if the clock is actually drifting. DietPi's default time sync
@@ -569,10 +602,10 @@ configuration, and troubleshooting.
 
 ```bash
 # Status
-systemctl status dump1090-fa piaware generate-pirehose-cert fr24feed adsbexchange-feed adsbexchange-mlat adsbexchange-stats adsb-stats
+systemctl status dump1090-fa piaware generate-pirehose-cert fr24feed adsbexchange-feed adsbexchange-mlat adsbexchange-stats adsb-stats adsbscope
 
 # Restart everything
-sudo systemctl restart dump1090-fa piaware fr24feed adsbexchange-feed adsbexchange-mlat adsbexchange-stats adsb-stats
+sudo systemctl restart dump1090-fa piaware fr24feed adsbexchange-feed adsbexchange-mlat adsbexchange-stats adsb-stats adsbscope
 
 # Verify dongle is visible
 lsusb
@@ -586,6 +619,7 @@ lsmod | grep dvb_usb
 | Interface | URL |
 |---|---|
 | dump1090-fa SkyAware map | `http://<XU4-IP>:8080/` |
+| adsbscope live traffic view | `http://<XU4-IP>:8090/` |
 | fr24feed web UI | `http://<XU4-IP>:8754/` |
 | FlightAware stats | https://flightaware.com/adsb/stats/ |
 | Flightradar24 data sharing | https://www.flightradar24.com/account/data-sharing |

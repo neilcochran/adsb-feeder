@@ -1,0 +1,69 @@
+# adsbscope.service - adsbscope live traffic web view
+#
+# Installs to /etc/systemd/system/adsbscope.service
+# Binary expected at /usr/local/bin/adsbscope (npm global install of
+# @squawk/adsbscope) and Node at /usr/local/bin/node; this repo owns only the
+# unit, not the application.
+#
+# Create the dedicated user to match the pattern of the other feeder services:
+#   sudo useradd --system --home-dir /var/lib/adsbscope \
+#     --shell /usr/sbin/nologin adsbscope
+#   sudo mkdir -p /var/lib/adsbscope
+#   sudo chown adsbscope:adsbscope /var/lib/adsbscope
+#
+# Receiver position is read from an environment file rather than being baked
+# into this unit, so the station's real coordinates stay out of the repo (the
+# same reason adsb-stats keeps receiver_lat/receiver_lon in its config file):
+#   sudo mkdir -p /etc/adsbscope
+#   sudo tee /etc/adsbscope/adsbscope.env >/dev/null <<'ENV'
+#   ADSBSCOPE_LAT=<your latitude>
+#   ADSBSCOPE_LON=<your longitude>
+#   ENV
+#   sudo chown adsbscope:adsbscope /etc/adsbscope/adsbscope.env
+#   sudo chmod 640 /etc/adsbscope/adsbscope.env
+#
+# See README.md in this directory for the full service topology.
+
+[Unit]
+Description=adsbscope live traffic web view (Beast stream -> HTTP)
+Documentation=https://github.com/neilcochran/adsb-feeder/blob/master/systemd/README.md
+After=dump1090-fa.service network-online.target
+Wants=dump1090-fa.service
+
+[Service]
+Type=simple
+User=adsbscope
+Group=adsbscope
+WorkingDirectory=/var/lib/adsbscope
+# Node looks up HOME for cache paths; ProtectHome=true hides the real one, so
+# point it at the service's own state directory instead.
+Environment=HOME=/var/lib/adsbscope
+EnvironmentFile=/etc/adsbscope/adsbscope.env
+# Node is named explicitly rather than left to the script's "#!/usr/bin/env
+# node" shebang. The station pins its Node major deliberately, and a PATH
+# lookup would silently pick up whichever node landed earliest on PATH; an
+# absolute path turns a moved interpreter into a startup failure instead.
+ExecStart=/usr/local/bin/node /usr/local/bin/adsbscope --host localhost --bind 0.0.0.0 --lat ${ADSBSCOPE_LAT} --lon ${ADSBSCOPE_LON}
+Restart=on-failure
+RestartSec=10
+# Niced below adsb-stats (5): this is a viewer, and a dropped frame costs
+# nothing, whereas a sample the collector misses is gone for good. Matters on
+# the XU4, where the Node process holds ~260 MB and a quarter of a core.
+Nice=10
+SyslogIdentifier=adsbscope
+
+# Hardening (matches the level of piaware / dump1090-fa)
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=full
+ProtectHome=true
+# AF_NETLINK is required, not incidental: glibc's getifaddrs() (which backs
+# Node's os.networkInterfaces()) opens a netlink socket, so omitting it breaks
+# the startup banner that reports which address the view is served on.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+# Do not add MemoryDenyWriteExecute here: V8 maps JIT pages write-then-execute,
+# so it stops the process from starting at all.
+
+[Install]
+WantedBy=multi-user.target

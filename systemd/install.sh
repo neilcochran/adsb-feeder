@@ -130,6 +130,7 @@ EXPECTED_SERVICES=(
     adsbexchange-mlat
     adsbexchange-stats
     adsb-stats
+    adsbscope
 )
 
 for svc in "${EXPECTED_SERVICES[@]}"; do
