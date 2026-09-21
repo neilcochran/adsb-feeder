@@ -41,7 +41,7 @@ RTL-SDR Dongle -> dump1090-fa (port 30005 Beast, 30002 AVR, 8080 web)
 |---|---|---|
 | 30002 | AVR (raw) | fr24feed |
 | 30003 | SBS (BaseStation) | adsb-stats |
-| 30005 | Beast | piaware, adsbexchange-feed, adsbscope |
+| 30005 | Beast | piaware, adsbexchange-feed, adsbexchange-mlat, adsbscope |
 | 8080 | HTTP | dump1090-fa web map (SkyAware) |
 | 8090 | HTTP | adsbscope live traffic view |
 | 8754 | HTTP | fr24feed web UI |
